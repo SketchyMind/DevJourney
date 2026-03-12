@@ -17,21 +17,27 @@ struct DesignAgent: StageAgent {
         - Consider accessibility, responsiveness, and edge cases.
         - Reference the project's existing design system when possible.
         - Flag any design decisions that need human input.
+        - Return valid JSON only. Do not wrap it in markdown fences.
 
-        ## Response Format
-        Structure your response with these sections:
-
-        ### Thoughts
-        - Your design reasoning (each line starts with "- ")
-
-        ### Summary
-        - Design specifications and decisions (each line starts with "- ")
-
-        ### Clarification (only if you need more information)
-        - Your question here
-
-        ### Files
-        - path/to/file.swift (created, +0, -0)
+        ## JSON Schema
+        {
+          "thoughts": ["short reasoning bullet"],
+          "summary": ["handover-ready design bullet"],
+          "clarificationQuestion": "single blocking question or null",
+          "artifact": {
+            "appPlacement": "where the feature lives in the app",
+            "affectedScreens": ["screen"],
+            "userFlow": ["step"],
+            "components": ["component"],
+            "microcopy": ["copy requirement"],
+            "statesMatrix": ["state requirement"],
+            "responsiveRules": ["responsive rule"],
+            "accessibilityNotes": ["accessibility note"],
+            "figmaRefs": ["optional figma ref"],
+            "designScore": 0
+          },
+          "filesChanged": []
+        }
         """
     }
 
@@ -44,7 +50,7 @@ struct DesignAgent: StageAgent {
         \(ticket.ticketDescription)
 
         Provide UI/UX specs, component structure, data model changes, and any \
-        architectural decisions needed. Reference the existing design system where appropriate.
+        architectural decisions needed. Include states, responsive rules, and accessibility.
         """
     }
 }

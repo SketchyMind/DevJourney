@@ -1,5 +1,7 @@
 import SwiftUI
-import Combine
+#if canImport(AppKit)
+import AppKit
+#endif
 
 struct ProjectSetupView: View {
     @EnvironmentObject var appState: AppState
@@ -13,23 +15,17 @@ struct ProjectSetupView: View {
     @State private var selectedScreenSizes: Set<String> = ["mobile", "tablet", "desktop"]
     @State private var responsiveBehavior: String = "fluid"
     @State private var techStack: String = ""
-
-    // Provider auth
-    @StateObject private var providerAuth = AIProviderAuthService()
-    @State private var anthropicKey: String = ""
-    @State private var openaiKey: String = ""
-    @State private var geminiKey: String = ""
-    @State private var showAPIKeyField: [AIProvider: Bool] = [:]
+    @State private var selectedMobilePlatforms: Set<String> = [MobilePlatform.ios.rawValue, MobilePlatform.android.rawValue]
+    @State private var mcpCopied: Bool = false
 
     private let steps = [
         (number: 1, title: "Project", subtitle: "Describe your project"),
-        (number: 2, title: "Global Settings", subtitle: "Screen sizes & breakpoints"),
-        (number: 3, title: "AI Models", subtitle: "Configure API keys")
+        (number: 2, title: "Global Settings", subtitle: "Screen sizes & breakpoints")
     ]
 
     // Section anchor IDs
     private enum SectionID: Int, CaseIterable {
-        case project = 0, globalSettings = 1, aiModels = 2
+        case project = 0, globalSettings = 1
     }
 
     var body: some View {
@@ -58,11 +54,8 @@ struct ProjectSetupView: View {
                                     .id(SectionID.globalSettings)
                                     .background(sectionOffsetTracker(SectionID.globalSettings))
 
-                                sectionDivider
-
-                                aiModelsSection
-                                    .id(SectionID.aiModels)
-                                    .background(sectionOffsetTracker(SectionID.aiModels))
+                                // MCP connection info
+                                mcpInfoSection
 
                                 // Extra padding at bottom for scroll room
                                 Color.clear.frame(height: 100)
@@ -99,7 +92,6 @@ struct ProjectSetupView: View {
         }
         .frame(height: 0)
         .onPreferenceChange(SectionOffsetKey.self) { offsets in
-            // Find the section closest to top (with a threshold)
             let sorted = offsets.sorted { $0.value < $1.value }
             if let closest = sorted.first(where: { $0.value > -100 }) ?? sorted.last {
                 if activeSection != closest.key {
@@ -157,9 +149,26 @@ struct ProjectSetupView: View {
             }
 
             Spacer()
+
+            // MCP status indicator
+            HStack(spacing: 8) {
+                let mcpConnected = appState.mcpConnectionStatus.isClientConnected()
+                let claudeMCPReady = appState.claudeMCPRegistrationStatus.isReadyForLocalProjectStore
+                Circle()
+                    .fill((mcpConnected || claudeMCPReady) ? Color.accentGreen : Color.textMuted)
+                    .frame(width: 8, height: 8)
+                Text(
+                    mcpConnected
+                    ? "\(appState.mcpConnectionStatus.displayClientName) connected"
+                    : (claudeMCPReady ? "Claude MCP ready" : "MCP client idle")
+                )
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.textMuted)
+            }
         }
         .padding(.horizontal, 24)
         .padding(.top, 32)
+        .padding(.bottom, 16)
     }
 
     // MARK: - Bottom Bar
@@ -258,7 +267,7 @@ struct ProjectSetupView: View {
                 HStack(spacing: 12) {
                     ForEach(ProjectType.allCases, id: \.self) { type in
                         let isSelected = projectType == type
-                        Button(action: { projectType = type }) {
+                        Button(action: { selectProjectType(type) }) {
                             VStack(spacing: 10) {
                                 Image(systemName: type.iconName)
                                     .font(.system(size: 28))
@@ -296,6 +305,38 @@ struct ProjectSetupView: View {
                 title: "Global Project Settings",
                 subtitle: "These settings apply to every ticket and are shared with all agents."
             )
+
+            if projectType == .mobileApp {
+                fieldGroup(title: "Mobile Targets") {
+                    Text("Choose the platforms this project should support. These targets will be included in every ticket context.")
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundColor(.textMuted)
+
+                    HStack(spacing: 10) {
+                        ForEach(MobilePlatform.allCases, id: \.self) { platform in
+                            let isSelected = selectedMobilePlatforms.contains(platform.rawValue)
+                            Button(action: { toggleMobilePlatform(platform.rawValue) }) {
+                                HStack(spacing: 8) {
+                                    Image(systemName: platform.iconName)
+                                        .font(.system(size: 14, weight: .semibold))
+                                    Text(platform.displayName)
+                                        .font(.system(size: 12, weight: .semibold))
+                                }
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(isSelected ? Color.accentPurpleDim : Color.white.opacity(0.02))
+                                .foregroundColor(isSelected ? .textPrimary : .textSecondary)
+                                .cornerRadius(Spacing.radiusMd)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: Spacing.radiusMd)
+                                        .stroke(isSelected ? Color.accentPurple : Color.borderSubtle, lineWidth: 1)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
 
             fieldGroup(title: "Target Screen Sizes") {
                 HStack(spacing: 8) {
@@ -384,301 +425,89 @@ struct ProjectSetupView: View {
         }
     }
 
-    // MARK: - Section 3: AI Models
+    // MARK: - MCP Info Section
 
-    private var aiModelsSection: some View {
-        VStack(alignment: .leading, spacing: 20) {
+    private var mcpInfoSection: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            sectionDivider
+
             sectionHeader(
-                title: "AI Model Configuration",
-                subtitle: "Connect AI providers via OAuth 2.0 or add models with API keys. Model and agent count can be configured per-ticket."
+                title: "AI Connection",
+                subtitle: "DevJourney works as an MCP server. Connect it from Claude Desktop, Cursor, or any MCP-compatible AI client."
             )
 
-            // Provider cards
-            VStack(spacing: 12) {
-                providerCard(
-                    name: "Anthropic",
-                    subtitle: "API Key \u{00B7} Claude Opus 4.6, Sonnet 4.5, Haiku",
-                    logoColor: Color(red: 0xD9/255, green: 0x77/255, blue: 0x57/255),
-                    logoIcon: "message.fill",
-                    provider: .anthropic,
-                    apiKey: $anthropicKey
-                )
+            // Connection instructions
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 12) {
+                    Image(systemName: "network")
+                        .font(.system(size: 24))
+                        .foregroundColor(.accentPurple)
+                        .frame(width: 44, height: 44)
+                        .background(Color.accentPurpleDim)
+                        .clipShape(RoundedRectangle(cornerRadius: 8))
 
-                providerCard(
-                    name: "OpenAI",
-                    subtitle: "OAuth 2.0 \u{00B7} GPT-4o, o1, o3-mini",
-                    logoColor: Color(red: 0x10/255, green: 0xA3/255, blue: 0x7F/255),
-                    logoIcon: "sparkles",
-                    provider: .openai,
-                    apiKey: $openaiKey
-                )
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("MCP Server")
+                            .font(.system(size: 14, weight: .semibold))
+                            .foregroundColor(.textPrimary)
+                        Text("Add DevJourney to your AI client's MCP config to get started.")
+                            .font(.system(size: 12, weight: .regular))
+                            .foregroundColor(.textSecondary)
+                    }
+                }
 
-                providerCard(
-                    name: "Google",
-                    subtitle: "OAuth 2.0 \u{00B7} Gemini 2.5 Pro, Flash",
-                    logoColor: Color(red: 0x42/255, green: 0x85/255, blue: 0xF4/255),
-                    logoIcon: "brain",
-                    provider: .gemini,
-                    apiKey: $geminiKey
-                )
+                // Config snippet with copy button
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Add this to your AI client's MCP config:")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundColor(.textMuted)
+                        Spacer()
+                        Button(action: copyMCPConfig) {
+                            HStack(spacing: 4) {
+                                Image(systemName: mcpCopied ? "checkmark" : "doc.on.doc")
+                                    .font(.system(size: 11, weight: .medium))
+                                Text(mcpCopied ? "Copied!" : "Copy")
+                                    .font(.system(size: 11, weight: .semibold))
+                            }
+                            .foregroundColor(mcpCopied ? .accentGreen : .accentPurple)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 5)
+                            .background(mcpCopied ? Color.accentGreen.opacity(0.1) : Color.accentPurpleDim)
+                            .cornerRadius(Spacing.radiusSm)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    Text(mcpConfigString)
+                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                    .foregroundColor(.textSecondary)
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(Color.white.opacity(0.02))
+                    .cornerRadius(Spacing.radiusSm)
+                    .overlay(RoundedRectangle(cornerRadius: Spacing.radiusSm).stroke(Color.borderSubtle, lineWidth: 1))
+                }
             }
+            .padding(16)
+            .background(Color.bgElevated)
+            .cornerRadius(Spacing.radiusMd)
+            .overlay(RoundedRectangle(cornerRadius: Spacing.radiusMd).stroke(Color.borderSubtle, lineWidth: 1))
 
-            // Security note
+            // Info note
             HStack(spacing: 10) {
-                Image(systemName: "lock.fill")
+                Image(systemName: "info.circle.fill")
                     .font(.system(size: 16))
-                    .foregroundColor(.accentGreen)
-                Text("OAuth 2.0 tokens are encrypted at rest and auto-refresh. No API keys are stored for OAuth-connected providers.")
+                    .foregroundColor(.accentPurple)
+                Text("Your AI client (Claude, GPT, Gemini, etc.) handles the model selection. DevJourney focuses on project management and workflow.")
                     .font(.system(size: 11, weight: .regular))
-                    .foregroundColor(.accentGreen)
+                    .foregroundColor(.accentPurple)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.accentGreen.opacity(0.08))
+            .background(Color.accentPurple.opacity(0.08))
             .cornerRadius(Spacing.radiusMd)
-
-            sectionDivider
-
-            // Additional Models via API section
-            VStack(alignment: .leading, spacing: 20) {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Additional Models via API")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundColor(.textPrimary)
-                    Text("Add models from other providers or custom endpoints using an API key.")
-                        .font(.system(size: 13, weight: .regular))
-                        .foregroundColor(.textSecondary)
-                }
-
-                // Empty state card
-                VStack(spacing: 16) {
-                    Image(systemName: "plus.circle")
-                        .font(.system(size: 24))
-                        .foregroundColor(.accentPurple)
-                        .frame(width: 48, height: 48)
-                        .background(Color.accentPurpleDim)
-                        .clipShape(Circle())
-
-                    Text("No API models added yet")
-                        .font(.system(size: 13, weight: .medium))
-                        .foregroundColor(.textSecondary)
-
-                    Text("Add models from providers like Mistral, Cohere, or self-hosted endpoints.")
-                        .font(.system(size: 12, weight: .regular))
-                        .foregroundColor(.textMuted)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: 360)
-
-                    Button(action: {}) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 14, weight: .semibold))
-                            Text("Add Model via API")
-                                .font(.system(size: 14, weight: .semibold))
-                        }
-                        .foregroundColor(.white)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 10)
-                        .background(
-                            LinearGradient(
-                                colors: [.accentPurple, Color(red: 0xF4/255, green: 0x72/255, blue: 0xB6/255)],
-                                startPoint: .topLeading,
-                                endPoint: .bottomTrailing
-                            )
-                        )
-                        .cornerRadius(Spacing.radiusMd)
-                    }
-                    .buttonStyle(.plain)
-                }
-                .frame(maxWidth: .infinity)
-                .padding(24)
-                .background(Color.bgElevated)
-                .cornerRadius(Spacing.radiusMd)
-                .overlay(RoundedRectangle(cornerRadius: Spacing.radiusMd).stroke(Color.borderSubtle, lineWidth: 1))
-
-                // API note
-                HStack(spacing: 10) {
-                    Image(systemName: "info.circle.fill")
-                        .font(.system(size: 16))
-                        .foregroundColor(.accentOrange)
-                    Text("API keys are encrypted at rest and never leave your machine. Prefer OAuth 2.0 when available for automatic token management.")
-                        .font(.system(size: 11, weight: .regular))
-                        .foregroundColor(.accentOrange)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                .padding(12)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.accentOrange.opacity(0.08))
-                .cornerRadius(Spacing.radiusMd)
-            }
         }
-    }
-
-    // MARK: - Provider Card
-
-    @ViewBuilder
-    private func providerCard(
-        name: String,
-        subtitle: String,
-        logoColor: Color,
-        logoIcon: String,
-        provider: AIProvider,
-        apiKey: Binding<String>
-    ) -> some View {
-        let state = providerAuth.providerStates[provider] ?? .init()
-        let hasOAuth = providerAuth.supportsOAuth(provider)
-        let isExpanded = showAPIKeyField[provider] == true
-
-        VStack(alignment: .leading, spacing: 0) {
-            // Main row: logo + labels + action
-            HStack(spacing: 16) {
-                HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 8)
-                            .fill(logoColor)
-                            .frame(width: 36, height: 36)
-                        Image(systemName: logoIcon)
-                            .font(.system(size: 18, weight: .medium))
-                            .foregroundColor(.white)
-                    }
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(name)
-                            .font(.system(size: 14, weight: .semibold))
-                            .foregroundColor(.textPrimary)
-                        Text(subtitle)
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundColor(.textMuted)
-                    }
-                }
-
-                Spacer()
-
-                if providerAuth.isAuthenticating == provider {
-                    ProgressView()
-                        .scaleEffect(0.7)
-                } else if state.isConnected {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 12))
-                            .foregroundColor(.accentGreen)
-                        Text("Connected")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundColor(.accentGreen)
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.vertical, 6)
-                    .background(Color.accentGreen.opacity(0.08))
-                    .cornerRadius(100)
-                    .overlay(RoundedRectangle(cornerRadius: 100).stroke(Color.accentGreen, lineWidth: 1))
-                } else if hasOAuth {
-                    // OAuth providers: show sign-in button
-                    Button(action: { startOAuth(provider) }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "arrow.right.square")
-                                .font(.system(size: 14))
-                            Text("Sign in with \(name)")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .foregroundColor(.accentPurple)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 8)
-                        .background(Color.accentPurpleDim)
-                        .cornerRadius(100)
-                        .overlay(RoundedRectangle(cornerRadius: 100).stroke(Color.accentPurple, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    // API key only: show connect button
-                    Button(action: {
-                        withAnimation(.easeInOut(duration: 0.2)) {
-                            showAPIKeyField[provider] = !(showAPIKeyField[provider] ?? false)
-                        }
-                    }) {
-                        HStack(spacing: 8) {
-                            Image(systemName: "key.fill")
-                                .font(.system(size: 12))
-                            Text("Add API Key")
-                                .font(.system(size: 12, weight: .semibold))
-                        }
-                        .foregroundColor(.accentPurple)
-                        .padding(.horizontal, 20)
-                        .padding(.vertical, 8)
-                        .background(Color.accentPurpleDim)
-                        .cornerRadius(100)
-                        .overlay(RoundedRectangle(cornerRadius: 100).stroke(Color.accentPurple, lineWidth: 1))
-                    }
-                    .buttonStyle(.plain)
-                }
-            }
-            .padding(16)
-
-            // Expandable API key field
-            if !state.isConnected && isExpanded {
-                VStack(alignment: .leading, spacing: 8) {
-                    if hasOAuth {
-                        HStack {
-                            Rectangle().fill(Color.borderSubtle).frame(height: 1)
-                            Text("or use API key")
-                                .font(.system(size: 11))
-                                .foregroundColor(.textMuted)
-                            Rectangle().fill(Color.borderSubtle).frame(height: 1)
-                        }
-                    }
-
-                    HStack(spacing: 8) {
-                        SecureField(apiKeyPlaceholder(provider), text: apiKey)
-                            .textFieldStyle(.plain)
-                            .font(.system(size: 12, weight: .regular, design: .monospaced))
-                            .foregroundColor(.textPrimary)
-                            .padding(10)
-                            .background(Color.white.opacity(0.02))
-                            .cornerRadius(Spacing.radiusSm)
-                            .overlay(RoundedRectangle(cornerRadius: Spacing.radiusSm).stroke(Color.borderSubtle, lineWidth: 1))
-
-                        Button("Connect") {
-                            providerAuth.connectWithAPIKey(provider: provider, key: apiKey.wrappedValue)
-                            appState.refreshProviderStatuses()
-                        }
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(.accentPurple)
-                        .buttonStyle(.plain)
-                        .disabled(apiKey.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty)
-                    }
-                }
-                .padding(.horizontal, 16)
-                .padding(.bottom, 16)
-            }
-
-            // Error message
-            if let error = state.error {
-                Text(error)
-                    .font(.system(size: 11))
-                    .foregroundColor(.accentRed)
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 12)
-            }
-
-            // "Use API key instead" link for OAuth providers
-            if hasOAuth && !state.isConnected && !isExpanded {
-                Button(action: {
-                    withAnimation(.easeInOut(duration: 0.2)) {
-                        showAPIKeyField[provider] = true
-                    }
-                }) {
-                    Text("Use API key instead")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundColor(.textMuted)
-                }
-                .buttonStyle(.plain)
-                .padding(.horizontal, 16)
-                .padding(.bottom, 12)
-            }
-        }
-        .background(Color.bgElevated)
-        .cornerRadius(Spacing.radiusMd)
-        .overlay(RoundedRectangle(cornerRadius: Spacing.radiusMd).stroke(Color.borderSubtle, lineWidth: 1))
     }
 
     // MARK: - Shared Components
@@ -725,6 +554,31 @@ struct ProjectSetupView: View {
         }
     }
 
+    private var mcpConfigString: String {
+        let execPath = MCPLaunchService.shared.stableCommandPath()
+        return """
+        {
+          "mcpServers": {
+            "devjourney": {
+              "command": "\(execPath)",
+              "args": ["--mcp"]
+            }
+          }
+        }
+        """
+    }
+
+    private func copyMCPConfig() {
+        #if canImport(AppKit)
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(mcpConfigString, forType: .string)
+        #endif
+        mcpCopied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            mcpCopied = false
+        }
+    }
+
     private func toggleScreenSize(_ size: String) {
         if selectedScreenSizes.contains(size) {
             selectedScreenSizes.remove(size)
@@ -733,19 +587,20 @@ struct ProjectSetupView: View {
         }
     }
 
-    private func startOAuth(_ provider: AIProvider) {
-        switch provider {
-        case .openai: providerAuth.startOpenAIOAuth()
-        case .gemini: providerAuth.startGoogleOAuth()
-        case .anthropic: break // No OAuth for Anthropic
+    private func toggleMobilePlatform(_ platform: String) {
+        if selectedMobilePlatforms.contains(platform) {
+            if selectedMobilePlatforms.count > 1 {
+                selectedMobilePlatforms.remove(platform)
+            }
+        } else {
+            selectedMobilePlatforms.insert(platform)
         }
     }
 
-    private func apiKeyPlaceholder(_ provider: AIProvider) -> String {
-        switch provider {
-        case .anthropic: return "sk-ant-..."
-        case .openai: return "sk-..."
-        case .gemini: return "AIza..."
+    private func selectProjectType(_ type: ProjectType) {
+        projectType = type
+        if type == .mobileApp, selectedMobilePlatforms.isEmpty {
+            selectedMobilePlatforms = [MobilePlatform.ios.rawValue, MobilePlatform.android.rawValue]
         }
     }
 
@@ -755,10 +610,10 @@ struct ProjectSetupView: View {
         selectedScreenSizes = Set(project.screenSizes)
         responsiveBehavior = project.responsiveBehavior
         techStack = project.techStack
-
-        anthropicKey = KeychainService.shared.readAPIKey(for: .anthropic) ?? ""
-        openaiKey = KeychainService.shared.readAPIKey(for: .openai) ?? ""
-        geminiKey = KeychainService.shared.readAPIKey(for: .gemini) ?? ""
+        let storedPlatforms = Set(project.normalizedMobilePlatforms)
+        selectedMobilePlatforms = storedPlatforms.isEmpty
+            ? [MobilePlatform.ios.rawValue, MobilePlatform.android.rawValue]
+            : storedPlatforms
     }
 
     private func saveSettings() {
@@ -767,6 +622,7 @@ struct ProjectSetupView: View {
         project.screenSizes = Array(selectedScreenSizes)
         project.responsiveBehavior = responsiveBehavior
         project.techStack = techStack
+        project.mobilePlatforms = projectType == .mobileApp ? Array(selectedMobilePlatforms) : []
         appState.projectService.updateProject(project)
     }
 }

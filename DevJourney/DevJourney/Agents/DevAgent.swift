@@ -17,22 +17,28 @@ struct DevAgent: StageAgent {
         - Include appropriate error handling.
         - List all files you create or modify.
         - If the implementation approach is unclear, ask for clarification.
+        - Return valid JSON only. Do not wrap it in markdown fences.
 
-        ## Response Format
-        Structure your response with these sections:
-
-        ### Thoughts
-        - Your implementation reasoning (each line starts with "- ")
-
-        ### Summary
-        - What was implemented and key decisions (each line starts with "- ")
-
-        ### Clarification (only if you need more information)
-        - Your question here
-
-        ### Files
-        - path/to/file.swift (modified, +25, -3)
-        - path/to/new_file.swift (created, +40, -0)
+        ## JSON Schema
+        {
+          "thoughts": ["short reasoning bullet"],
+          "summary": ["implementation outcome bullet"],
+          "clarificationQuestion": "single blocking question or null",
+          "artifact": {
+            "branch": "current branch name",
+            "commitList": ["existing commit hash if any"],
+            "filesChanged": [
+              {"path": "path/to/file.swift", "status": "modified", "additions": 0, "deletions": 0}
+            ],
+            "previewURLs": ["preview url if available"],
+            "implementationNotes": ["implementation note"],
+            "buildStatus": "Pending",
+            "commitMessage": "optional commit message"
+          },
+          "filesChanged": [
+            {"path": "path/to/file.swift", "status": "modified", "additions": 0, "deletions": 0}
+          ]
+        }
         """
     }
 

@@ -9,7 +9,6 @@ final class Project {
     var projectType: String
     var folderPath: String
     var githubRepo: String?
-    var defaultModel: String = "claude-sonnet-4-5-20251001"
     var createdAt: Date
 
     // GitHub Connection
@@ -22,11 +21,18 @@ final class Project {
     var screenSizes: [String] = ["mobile", "tablet", "desktop"]
     var responsiveBehavior: String = "fluid"
     var techStack: String = ""
-
-    // AI Provider
-    var defaultProvider: String = "anthropic"
+    var mobilePlatforms: [String] = []
+    var planningProviderConfigId: String?
+    var planningModelOverride: String = ""
+    var designProviderConfigId: String?
+    var designModelOverride: String = ""
+    var devProviderConfigId: String?
+    var devModelOverride: String = ""
+    var debugProviderConfigId: String?
+    var debugModelOverride: String = ""
 
     @Relationship(deleteRule: .cascade) var tickets: [Ticket] = []
+    @Relationship(deleteRule: .cascade) var providerConfigs: [AIProviderConfig] = []
 
     init(
         id: String = UUID().uuidString,
@@ -35,7 +41,6 @@ final class Project {
         projectType: String,
         folderPath: String,
         githubRepo: String? = nil,
-        defaultModel: String = "claude-sonnet-4-5-20251001",
         githubUsername: String? = nil,
         githubAvatarURL: String? = nil,
         repoVisibility: String = "private",
@@ -43,7 +48,15 @@ final class Project {
         screenSizes: [String] = ["mobile", "tablet", "desktop"],
         responsiveBehavior: String = "fluid",
         techStack: String = "",
-        defaultProvider: String = "anthropic"
+        mobilePlatforms: [String] = [],
+        planningProviderConfigId: String? = nil,
+        planningModelOverride: String = "",
+        designProviderConfigId: String? = nil,
+        designModelOverride: String = "",
+        devProviderConfigId: String? = nil,
+        devModelOverride: String = "",
+        debugProviderConfigId: String? = nil,
+        debugModelOverride: String = ""
     ) {
         self.id = id
         self.name = name
@@ -51,7 +64,6 @@ final class Project {
         self.projectType = projectType
         self.folderPath = folderPath
         self.githubRepo = githubRepo
-        self.defaultModel = defaultModel
         self.createdAt = Date()
         self.githubUsername = githubUsername
         self.githubAvatarURL = githubAvatarURL
@@ -60,7 +72,15 @@ final class Project {
         self.screenSizes = screenSizes
         self.responsiveBehavior = responsiveBehavior
         self.techStack = techStack
-        self.defaultProvider = defaultProvider
+        self.mobilePlatforms = mobilePlatforms
+        self.planningProviderConfigId = planningProviderConfigId
+        self.planningModelOverride = planningModelOverride
+        self.designProviderConfigId = designProviderConfigId
+        self.designModelOverride = designModelOverride
+        self.devProviderConfigId = devProviderConfigId
+        self.devModelOverride = devModelOverride
+        self.debugProviderConfigId = debugProviderConfigId
+        self.debugModelOverride = debugModelOverride
     }
 
     // MARK: - Computed Helpers
@@ -73,7 +93,79 @@ final class Project {
         ResponsiveBehavior(rawValue: responsiveBehavior) ?? .fluid
     }
 
-    var defaultProviderEnum: AIProvider {
-        AIProvider(rawValue: defaultProvider) ?? .anthropic
+    var mobilePlatformEnums: [MobilePlatform] {
+        mobilePlatforms.compactMap { MobilePlatform(rawValue: $0) }
+    }
+
+    var normalizedMobilePlatforms: [String] {
+        let validPlatforms = mobilePlatformEnums.map(\.rawValue)
+        guard projectType == ProjectType.mobileApp.rawValue else { return [] }
+        return validPlatforms.isEmpty
+            ? [MobilePlatform.ios.rawValue, MobilePlatform.android.rawValue]
+            : validPlatforms
+    }
+
+    func providerConfigId(for stage: Stage) -> String? {
+        switch stage {
+        case .planning:
+            return planningProviderConfigId
+        case .design:
+            return designProviderConfigId
+        case .dev:
+            return devProviderConfigId
+        case .debug:
+            return debugProviderConfigId
+        case .backlog, .complete:
+            return nil
+        }
+    }
+
+    func modelOverride(for stage: Stage) -> String? {
+        let value: String
+        switch stage {
+        case .planning:
+            value = planningModelOverride
+        case .design:
+            value = designModelOverride
+        case .dev:
+            value = devModelOverride
+        case .debug:
+            value = debugModelOverride
+        case .backlog, .complete:
+            value = ""
+        }
+
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    func setProviderConfigId(_ configId: String?, for stage: Stage) {
+        switch stage {
+        case .planning:
+            planningProviderConfigId = configId
+        case .design:
+            designProviderConfigId = configId
+        case .dev:
+            devProviderConfigId = configId
+        case .debug:
+            debugProviderConfigId = configId
+        case .backlog, .complete:
+            break
+        }
+    }
+
+    func setModelOverride(_ value: String, for stage: Stage) {
+        switch stage {
+        case .planning:
+            planningModelOverride = value
+        case .design:
+            designModelOverride = value
+        case .dev:
+            devModelOverride = value
+        case .debug:
+            debugModelOverride = value
+        case .backlog, .complete:
+            break
+        }
     }
 }

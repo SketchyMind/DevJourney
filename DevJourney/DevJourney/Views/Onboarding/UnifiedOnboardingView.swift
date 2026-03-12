@@ -10,7 +10,7 @@ struct UnifiedOnboardingView: View {
     @State private var selectedFolderPath: String = ""
     @State private var projectDescription: String = ""
     @State private var projectType: ProjectType = .webApp
-    @State private var githubEnabled: Bool = false
+    @State private var githubEnabled: Bool = KeychainService.shared.readGitHubToken() != nil
     @State private var createNewRepo: Bool = true
     @State private var repoName: String = "devjourney-project"
     @State private var existingRepoURL: String = ""
@@ -31,6 +31,10 @@ struct UnifiedOnboardingView: View {
         URL(fileURLWithPath: selectedFolderPath).lastPathComponent
     }
 
+    private var recentProjects: [Project] {
+        appState.recentProjects()
+    }
+
     var isFormValid: Bool {
         !selectedFolderPath.isEmpty
     }
@@ -40,11 +44,11 @@ struct UnifiedOnboardingView: View {
             ProjectSetupView(
                 project: project,
                 onComplete: {
-                    appState.currentProject = project
+                    appState.selectProject(project)
                     isInSetup = false
                 },
                 onSkip: {
-                    appState.currentProject = project
+                    appState.selectProject(project)
                     isInSetup = false
                 }
             )
@@ -74,6 +78,10 @@ struct UnifiedOnboardingView: View {
                     // Main content card
                     ScrollView {
                         VStack(spacing: Spacing.xl) {
+                            if !recentProjects.isEmpty {
+                                recentProjectsSection
+                            }
+
                             // Workspace Folder Section
                             workspaceFolderSection
 
@@ -142,6 +150,71 @@ struct UnifiedOnboardingView: View {
     }
 
     // MARK: - Sections
+
+    private var recentProjectsSection: some View {
+        VStack(alignment: .leading, spacing: Spacing.md) {
+            HStack {
+                Text("Recent Workspaces")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundColor(.textPrimary)
+
+                Spacer()
+
+                Text("Last \(recentProjects.count)")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundColor(.textMuted)
+            }
+
+            VStack(spacing: Spacing.sm) {
+                ForEach(recentProjects, id: \.id) { project in
+                    Button {
+                        appState.selectProject(project)
+                    } label: {
+                        HStack(spacing: Spacing.md) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: 10)
+                                    .fill(Color.accentPurple.opacity(0.14))
+                                    .frame(width: 40, height: 40)
+                                Image(systemName: "folder.fill")
+                                    .font(.system(size: 16, weight: .semibold))
+                                    .foregroundColor(.accentPurple)
+                            }
+
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(project.name)
+                                    .font(.system(size: 13, weight: .semibold))
+                                    .foregroundColor(.textPrimary)
+                                    .lineLimit(1)
+
+                                Text(project.folderPath)
+                                    .font(.system(size: 11, weight: .regular, design: .monospaced))
+                                    .foregroundColor(.textSecondary)
+                                    .lineLimit(1)
+                            }
+
+                            Spacer()
+
+                            Text(stageStatusLabel(for: project))
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundColor(.accentGreen)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(Color.accentGreen.opacity(0.08))
+                                .cornerRadius(999)
+                        }
+                        .padding(Spacing.md)
+                        .background(Color.bgElevated)
+                        .cornerRadius(Spacing.radiusMd)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Spacing.radiusMd)
+                                .stroke(Color.borderSubtle, lineWidth: 1)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+    }
 
     private var workspaceFolderSection: some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
@@ -276,11 +349,21 @@ struct UnifiedOnboardingView: View {
 
                     Spacer()
 
-                    Button("Sign Out") {
+                    Button {
                         gitHubAuth.signOut()
+                    } label: {
+                        Text("Sign Out")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundColor(.accentRed)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 5)
+                            .background(Color.accentRed.opacity(0.1))
+                            .cornerRadius(100)
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 100)
+                                    .stroke(Color.accentRed.opacity(0.3), lineWidth: 1)
+                            )
                     }
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.textMuted)
                     .buttonStyle(.plain)
                 }
             } else if gitHubAuth.isAuthenticating {
@@ -292,14 +375,18 @@ struct UnifiedOnboardingView: View {
                         .foregroundColor(.textSecondary)
                 }
             } else {
-                // Not authenticated - show options
+                // Not authenticated - show PAT auth
                 VStack(alignment: .leading, spacing: Spacing.sm) {
-                    // OAuth button
-                    Button(action: { gitHubAuth.startOAuth() }) {
+                    // Generate token button
+                    Button {
+                        if let url = URL(string: "https://github.com/settings/tokens/new?scopes=repo,user&description=DevJourney") {
+                            NSWorkspace.shared.open(url)
+                        }
+                    } label: {
                         HStack(spacing: 8) {
                             Image(systemName: "arrow.up.right.square")
                                 .font(.system(size: 13, weight: .medium))
-                            Text("Sign in with GitHub")
+                            Text("Generate Token on GitHub")
                                 .font(.system(size: 13, weight: .semibold))
                         }
                         .foregroundColor(.textPrimary)
@@ -314,20 +401,39 @@ struct UnifiedOnboardingView: View {
                     }
                     .buttonStyle(.plain)
 
-                    // Divider
-                    HStack {
-                        Rectangle().fill(Color.borderSubtle).frame(height: 1)
-                        Text("or")
-                            .font(.system(size: 11, weight: .regular))
-                            .foregroundColor(.textMuted)
-                        Rectangle().fill(Color.borderSubtle).frame(height: 1)
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: "key.fill")
+                            .font(.system(size: 11))
+                            .foregroundColor(.accentYellow)
+                            .padding(.top, 2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Generate a token, then paste it below.")
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundColor(.textSecondary)
+                            Text("Enable scopes: ")
+                                .font(.system(size: 11, weight: .regular))
+                                .foregroundColor(.textSecondary)
+                            + Text("repo")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.accentYellow)
+                            + Text(" and ")
+                                .font(.system(size: 11, weight: .regular))
+                                .foregroundColor(.textSecondary)
+                            + Text("user")
+                                .font(.system(size: 11, weight: .bold))
+                                .foregroundColor(.accentYellow)
+                        }
                     }
+                    .padding(Spacing.sm)
+                    .background(Color.accentYellow.opacity(0.08))
+                    .cornerRadius(Spacing.radiusSm)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Spacing.radiusSm)
+                            .stroke(Color.accentYellow.opacity(0.25), lineWidth: 1)
+                    )
 
                     // PAT input
                     VStack(alignment: .leading, spacing: Spacing.gapXs) {
-                        Text("Personal Access Token")
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundColor(.textSecondary)
                         HStack(spacing: Spacing.gapSm) {
                             SecureField("ghp_...", text: $patInput)
                                 .textFieldStyle(.plain)
@@ -508,6 +614,7 @@ struct UnifiedOnboardingView: View {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
+        panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.message = "Select your project folder"
         panel.prompt = "Select"
@@ -532,13 +639,14 @@ struct UnifiedOnboardingView: View {
         isCreating = true
 
         do {
-            // Initialize git repository in project folder
-            let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-            task.arguments = ["init"]
-            task.currentDirectoryURL = URL(fileURLWithPath: selectedFolderPath)
-            try task.run()
-            task.waitUntilExit()
+            if let existingProject = appState.projectService.loadOrImportProject(folderPath: selectedFolderPath) {
+                createdProject = existingProject
+                isCreating = false
+                isInSetup = true
+                return
+            }
+
+            try initializeGitRepositoryIfNeeded(at: URL(fileURLWithPath: selectedFolderPath))
 
             // Determine GitHub repo URL
             var githubRepo: String?
@@ -565,6 +673,7 @@ struct UnifiedOnboardingView: View {
 
             modelContext.insert(project)
             try modelContext.save()
+            appState.projectService.ensureDefaultProviderConfigs(for: project)
 
             // If creating a new repo, do it asynchronously
             if githubEnabled && gitHubAuth.isAuthenticated && createNewRepo {
@@ -585,6 +694,49 @@ struct UnifiedOnboardingView: View {
         }
     }
 
+    private func stageStatusLabel(for project: Project) -> String {
+        let ticketCount = appState.projectService.getProjectTickets(projectId: project.id).count
+        if ticketCount == 0 {
+            return "No tickets"
+        }
+        if ticketCount == 1 {
+            return "1 ticket"
+        }
+        return "\(ticketCount) tickets"
+    }
+
+    private func initializeGitRepositoryIfNeeded(at folderURL: URL) throws {
+        let gitFolderURL = folderURL.appendingPathComponent(".git", isDirectory: true)
+        if FileManager.default.fileExists(atPath: gitFolderURL.path) {
+            return
+        }
+
+        let task = Process()
+        let outputPipe = Pipe()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/git")
+        task.arguments = ["init"]
+        task.currentDirectoryURL = folderURL
+        task.standardOutput = outputPipe
+        task.standardError = outputPipe
+        try task.run()
+        task.waitUntilExit()
+
+        guard task.terminationStatus == 0 else {
+            let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            throw NSError(
+                domain: "DevJourney.GitInit",
+                code: Int(task.terminationStatus),
+                userInfo: [
+                    NSLocalizedDescriptionKey: output?.isEmpty == false
+                        ? output!
+                        : "Failed to initialize a Git repository in the selected folder."
+                ]
+            )
+        }
+    }
+
     private func createGitHubRepo(for project: Project) async {
         guard let token = KeychainService.shared.readGitHubToken() else { return }
 
@@ -597,10 +749,41 @@ struct UnifiedOnboardingView: View {
 
         do {
             let response = try await GitHubService().createRepository(request: request, token: token)
-            // Add remote to local git repo
+            let git = GitHubService()
             let projectURL = URL(fileURLWithPath: selectedFolderPath)
-            _ = await GitHubService().runGitAsync(at: projectURL, args: ["remote", "add", "origin", response.cloneUrl])
+
+            // Ensure there's at least a .gitignore so we have something to commit
+            let gitignorePath = projectURL.appendingPathComponent(".gitignore")
+            if !FileManager.default.fileExists(atPath: gitignorePath.path) {
+                try? ".DS_Store\n.build/\n*.xcuserstate\n".write(to: gitignorePath, atomically: true, encoding: .utf8)
+            }
+
+            // Use token-embedded HTTPS URL so git push can authenticate
+            let authedURL = "https://x-access-token:\(token)@github.com/\(response.fullName).git"
+
+            // Reuse origin when the selected folder is already a repository.
+            let existingOrigin = await git.runGitAsync(at: projectURL, args: ["remote", "get-url", "origin"])
+            if existingOrigin?.isEmpty == false {
+                _ = await git.runGitAsync(at: projectURL, args: ["remote", "set-url", "origin", authedURL])
+            } else {
+                _ = await git.runGitAsync(at: projectURL, args: ["remote", "add", "origin", authedURL])
+            }
+
+            // Create initial commit and push
+            _ = await git.runGitAsync(at: projectURL, args: ["add", "-A"])
+            _ = await git.runGitAsync(at: projectURL, args: [
+                "-c", "user.name=\(gitHubAuth.username ?? "DevJourney")",
+                "-c", "user.email=\(gitHubAuth.username ?? "devjourney")@users.noreply.github.com",
+                "commit", "-m", "Initial commit"
+            ])
+            _ = await git.runGitAsync(at: projectURL, args: ["branch", "-M", "main"])
+            _ = await git.runGitAsync(at: projectURL, args: ["push", "-u", "origin", "main"])
+
+            // Replace remote URL with clean one (don't store token in git config)
+            _ = await git.runGitAsync(at: projectURL, args: ["remote", "set-url", "origin", response.cloneUrl])
+
             project.githubRepo = response.htmlUrl
+            print("GitHub repo created and initial push completed: \(response.htmlUrl)")
         } catch {
             // Repo creation failed - not critical, user can retry from settings
             print("GitHub repo creation failed: \(error)")

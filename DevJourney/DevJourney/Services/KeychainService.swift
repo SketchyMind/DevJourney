@@ -22,6 +22,7 @@ enum KeychainError: LocalizedError {
 final class KeychainService: Sendable {
     static let shared = KeychainService()
     static let githubOAuthService = "com.devjourney.github.oauth"
+    static let providerAPIService = "com.devjourney.provider.apikey"
 
     // MARK: - Core Operations
 
@@ -88,24 +89,6 @@ final class KeychainService: Sendable {
         readString(service: service, account: account) != nil
     }
 
-    // MARK: - AI Provider Convenience
-
-    func saveAPIKey(for provider: AIProvider, key: String) throws {
-        try saveString(service: provider.keychainService, value: key)
-    }
-
-    func readAPIKey(for provider: AIProvider) -> String? {
-        readString(service: provider.keychainService)
-    }
-
-    func deleteAPIKey(for provider: AIProvider) throws {
-        try delete(service: provider.keychainService)
-    }
-
-    func isProviderConnected(_ provider: AIProvider) -> Bool {
-        exists(service: provider.keychainService)
-    }
-
     // MARK: - GitHub Convenience
 
     func saveGitHubToken(_ token: String, username: String = "default") throws {
@@ -120,12 +103,18 @@ final class KeychainService: Sendable {
         try delete(service: Self.githubOAuthService, account: username)
     }
 
-    // MARK: - Migration
+    // MARK: - Provider Convenience
 
-    func migrateFromUserDefaults() {
-        if let existingKey = UserDefaults.standard.string(forKey: "anthropicAPIKey"), !existingKey.isEmpty {
-            try? saveAPIKey(for: .anthropic, key: existingKey)
-            UserDefaults.standard.removeObject(forKey: "anthropicAPIKey")
-        }
+    func saveProviderAPIKey(_ token: String, reference: String) throws {
+        try saveString(service: Self.providerAPIService, account: reference, value: token)
     }
+
+    func readProviderAPIKey(reference: String) -> String? {
+        readString(service: Self.providerAPIService, account: reference)
+    }
+
+    func deleteProviderAPIKey(reference: String) throws {
+        try delete(service: Self.providerAPIService, account: reference)
+    }
+
 }

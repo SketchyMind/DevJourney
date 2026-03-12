@@ -91,20 +91,27 @@ final class GitHubService: Sendable {
         process.arguments = ["-C", path.path] + args
         process.currentDirectoryURL = path
 
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = Pipe()
+        let outPipe = Pipe()
+        let errPipe = Pipe()
+        process.standardOutput = outPipe
+        process.standardError = errPipe
 
         do {
             try process.run()
             process.waitUntilExit()
 
-            guard process.terminationStatus == 0 else { return nil }
+            if process.terminationStatus != 0 {
+                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                let errStr = String(data: errData, encoding: .utf8) ?? ""
+                print("[git \(args.joined(separator: " "))] failed: \(errStr)")
+                return nil
+            }
 
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let data = outPipe.fileHandleForReading.readDataToEndOfFile()
             return String(data: data, encoding: .utf8)?
                 .trimmingCharacters(in: .whitespacesAndNewlines)
         } catch {
+            print("[git \(args.joined(separator: " "))] exception: \(error)")
             return nil
         }
     }
@@ -154,6 +161,7 @@ struct GitHubRepoResponse: Codable, Sendable {
     let fullName: String
     let htmlUrl: String
     let cloneUrl: String
+    let sshUrl: String
     let `private`: Bool
 
     enum CodingKeys: String, CodingKey {
@@ -161,6 +169,7 @@ struct GitHubRepoResponse: Codable, Sendable {
         case fullName = "full_name"
         case htmlUrl = "html_url"
         case cloneUrl = "clone_url"
+        case sshUrl = "ssh_url"
         case `private` = "private"
     }
 }

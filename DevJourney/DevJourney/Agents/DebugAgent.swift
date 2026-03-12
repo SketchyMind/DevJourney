@@ -17,21 +17,25 @@ struct DebugAgent: StageAgent {
         - Verify the fix addresses the issue without regressions.
         - List all files modified with the fix.
         - If you need more context about the bug, ask for clarification.
+        - Return valid JSON only. Do not wrap it in markdown fences.
 
-        ## Response Format
-        Structure your response with these sections:
-
-        ### Thoughts
-        - Your debugging reasoning and root cause analysis (each line starts with "- ")
-
-        ### Summary
-        - What was found and fixed (each line starts with "- ")
-
-        ### Clarification (only if you need more information)
-        - Your question here
-
-        ### Files
-        - path/to/file.swift (modified, +5, -2)
+        ## JSON Schema
+        {
+          "thoughts": ["short reasoning bullet"],
+          "summary": ["debug result bullet"],
+          "clarificationQuestion": "single blocking question or null",
+          "artifact": {
+            "testedScenarios": ["scenario"],
+            "failedScenarios": ["scenario"],
+            "bugItems": ["bug"],
+            "severitySummary": "severity overview",
+            "releaseRecommendation": "Ready",
+            "coverageScore": 0
+          },
+          "filesChanged": [
+            {"path": "path/to/file.swift", "status": "modified", "additions": 0, "deletions": 0}
+          ]
+        }
         """
     }
 

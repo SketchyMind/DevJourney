@@ -1,21 +1,22 @@
 import SwiftUI
+import SwiftData
 
 enum ActivePanel: Equatable {
     case ticketCreation
+    case detail(Ticket)
     case clarification(Ticket)
     case review(Ticket)
-    case agentWorking(Ticket)
     case history(Ticket)
 
     static func == (lhs: ActivePanel, rhs: ActivePanel) -> Bool {
         switch (lhs, rhs) {
         case (.ticketCreation, .ticketCreation):
             return true
+        case (.detail(let a), .detail(let b)):
+            return a.id == b.id
         case (.clarification(let a), .clarification(let b)):
             return a.id == b.id
         case (.review(let a), .review(let b)):
-            return a.id == b.id
-        case (.agentWorking(let a), .agentWorking(let b)):
             return a.id == b.id
         case (.history(let a), .history(let b)):
             return a.id == b.id
@@ -41,7 +42,13 @@ struct KanbanBoardView: View {
             Color.bgApp.ignoresSafeArea()
 
             VStack(spacing: 0) {
-                TopBarView(onSettingsTapped: { showSettings.toggle() })
+                TopBarView(
+                    onProjectTapped: {
+                        dismissPanel()
+                        appState.showProjectPicker()
+                    },
+                    onSettingsTapped: { showSettings.toggle() }
+                )
 
                 GeometryReader { geometry in
                     let columnSpacing: CGFloat = 10
@@ -55,6 +62,7 @@ struct KanbanBoardView: View {
                                 KanbanColumnView(
                                     stage: stage,
                                     onAddTicket: { handleAddTicket(stage: stage) },
+                                    onOpenDetails: { handleShowDetails($0) },
                                     onStartTicket: { handleStartTicket($0) },
                                     onStartStage: { handleStartStage($0) },
                                     onStopStage: { handleStopStage($0) },
@@ -105,16 +113,16 @@ struct KanbanBoardView: View {
             TicketCreationPanel(isPresented: panelBinding)
                 .environmentObject(appState)
 
+        case .detail(let ticket):
+            TicketDetailPanel(isPresented: panelBinding, ticket: ticket)
+                .environmentObject(appState)
+
         case .clarification(let ticket):
             ClarificationPanel(isPresented: panelBinding, ticket: ticket)
                 .environmentObject(appState)
 
         case .review(let ticket):
             ReviewPanel(isPresented: panelBinding, ticket: ticket)
-                .environmentObject(appState)
-
-        case .agentWorking(let ticket):
-            DesignAgentPanel(isPresented: panelBinding, ticket: ticket)
                 .environmentObject(appState)
 
         case .history(let ticket):
@@ -146,22 +154,30 @@ struct KanbanBoardView: View {
         }
     }
 
+    private func handleShowDetails(_ ticket: Ticket) {
+        withAnimation(.easeInOut(duration: 0.25)) {
+            activePanel = .detail(ticket)
+        }
+    }
+
     private func handleStartTicket(_ ticket: Ticket) {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
             ticket.setStatus(.ready)
             ticket.setStage(.planning)
+            ticket.setHandoverState(.idle)
         }
+        appState.projectService.updateTicket(ticket)
     }
 
     private func handleStartStage(_ ticket: Ticket) {
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
-            activePanel = .agentWorking(ticket)
+            activePanel = .detail(ticket)
         }
-        appState.startAgent(for: ticket)
+        appState.startStage(for: ticket)
     }
 
     private func handleStopStage(_ ticket: Ticket) {
-        appState.stopAgent(for: ticket.id)
+        appState.stopStage(for: ticket)
         withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
             activePanel = nil
         }
@@ -189,6 +205,8 @@ struct KanbanBoardView: View {
         withAnimation(.spring(response: 0.4, dampingFraction: 0.75)) {
             ticket.setStage(.complete)
             ticket.setStatus(.complete)
+            ticket.setHandoverState(.complete)
         }
+        appState.projectService.updateTicket(ticket)
     }
 }

@@ -1,9 +1,7 @@
 import SwiftUI
-import SwiftData
 
 struct TicketCreationPanel: View {
     @EnvironmentObject var appState: AppState
-    @Environment(\.modelContext) private var modelContext
     @Binding var isPresented: Bool
 
     @State private var title = ""
@@ -11,13 +9,7 @@ struct TicketCreationPanel: View {
     @State private var priority: Priority = .medium
     @State private var tags: [String] = []
     @State private var tagInput = ""
-    @State private var selectedModel = "claude-sonnet-4-5-20251001"
     @State private var agentCount = 1
-
-    private var availableModels: [AIModelConfig] {
-        let configured = AIModelConfig.configuredModels
-        return configured.isEmpty ? AIModelConfig.allModels : configured
-    }
 
     var body: some View {
         PanelContainer(title: "Create Ticket", isPresented: $isPresented) {
@@ -135,29 +127,6 @@ struct TicketCreationPanel: View {
                     }
                 }
 
-                // Model Selection
-                VStack(alignment: .leading, spacing: Spacing.gapXs) {
-                    Text("AI Model")
-                        .font(Typography.labelMedium)
-                        .foregroundColor(.textSecondary)
-                    Picker("", selection: $selectedModel) {
-                        ForEach(availableModels) { model in
-                            Text(model.displayName)
-                                .tag(model.id)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .tint(.accentPurple)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(Spacing.sm)
-                    .background(Color.bgApp)
-                    .cornerRadius(Spacing.radiusSm)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Spacing.radiusSm)
-                            .stroke(Color.borderSubtle, lineWidth: 1)
-                    )
-                }
-
                 // Agent Count
                 VStack(alignment: .leading, spacing: Spacing.gapXs) {
                     Text("Agent Count")
@@ -203,11 +172,6 @@ struct TicketCreationPanel: View {
                 .disabled(title.isEmpty)
             }
         }
-        .onAppear {
-            if let project = appState.currentProject, !project.defaultModel.isEmpty {
-                selectedModel = project.defaultModel
-            }
-        }
     }
 
     private func addTag() {
@@ -219,20 +183,17 @@ struct TicketCreationPanel: View {
 
     private func createTicket() {
         guard let project = appState.currentProject else { return }
-        let ticket = Ticket(
+        let ticket = appState.projectService.createTicket(
             title: title,
             ticketDescription: description,
             priority: priority,
             projectId: project.id,
-            aiModel: selectedModel
+            tags: tags,
+            agentCount: agentCount
         )
-        ticket.tags = tags
-        ticket.agentCount = agentCount
-        modelContext.insert(ticket)
         appState.tickets.append(ticket)
         isPresented = false
     }
-
 }
 
 

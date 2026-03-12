@@ -16,21 +16,27 @@ struct PlanningAgent: StageAgent {
         - Identify dependencies between tasks.
         - Estimate relative complexity for each task.
         - Flag any ambiguities that need human clarification.
+        - Return valid JSON only. Do not wrap it in markdown fences.
 
-        ## Response Format
-        Structure your response with these sections:
-
-        ### Thoughts
-        - Your reasoning about the approach (each line starts with "- ")
-
-        ### Summary
-        - A list of planned tasks with descriptions (each line starts with "- ")
-
-        ### Clarification (only if you need more information)
-        - Your question here
-
-        ### Files
-        - path/to/file.swift (created, +0, -0)
+        ## JSON Schema
+        {
+          "thoughts": ["short reasoning bullet"],
+          "summary": ["handover-ready planning bullet"],
+          "clarificationQuestion": "single blocking question or null",
+          "artifact": {
+            "problem": "what problem is being solved",
+            "scopeIn": ["included scope"],
+            "scopeOut": ["excluded scope"],
+            "acceptanceCriteria": ["testable criterion"],
+            "dependencies": ["dependency"],
+            "assumptions": ["assumption"],
+            "risks": ["risk"],
+            "subtasks": ["subtask"],
+            "definitionOfReady": ["ready gate item"],
+            "planningScore": 0
+          },
+          "filesChanged": []
+        }
         """
     }
 
@@ -42,8 +48,8 @@ struct PlanningAgent: StageAgent {
 
         \(ticket.ticketDescription)
 
-        Break this down into specific, actionable tasks. Identify any risks or \
-        dependencies, and flag anything that needs clarification.
+        Break this down into specific, actionable tasks. Identify risks, acceptance criteria, \
+        dependencies, and Definition of Ready items.
         """
     }
 }

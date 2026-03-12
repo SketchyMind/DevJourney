@@ -11,8 +11,36 @@ struct ClarificationPanel: View {
         ticket.clarifications.filter { $0.answer == nil }
     }
 
+    private var inlineReviewFeedback: [ClarificationItem] {
+        unanswered.filter(isInlineReviewFeedback)
+    }
+
+    private var manualUnanswered: [ClarificationItem] {
+        unanswered.filter { !isInlineReviewFeedback($0) }
+    }
+
     private var answered: [ClarificationItem] {
         ticket.clarifications.filter { $0.answer != nil }
+    }
+
+    private var blockedReason: String? {
+        let trimmed = ticket.blockedReason?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private var mcpPromptName: String? {
+        switch ticket.stageEnum {
+        case .planning:
+            return "planning_agent"
+        case .design:
+            return "design_agent"
+        case .dev:
+            return "dev_agent"
+        case .debug:
+            return "debug_agent"
+        case .backlog, .complete:
+            return nil
+        }
     }
 
     var body: some View {
@@ -31,21 +59,56 @@ struct ClarificationPanel: View {
                 Divider().background(Color.borderSubtle)
 
                 if unanswered.isEmpty && answered.isEmpty {
-                    Text("No clarification questions yet.")
-                        .font(Typography.bodyMedium)
-                        .foregroundColor(.textMuted)
-                        .frame(maxWidth: .infinity, alignment: .center)
-                        .padding(.vertical, Spacing.xxl)
+                    VStack(alignment: .leading, spacing: Spacing.gapMd) {
+                        if let blockedReason {
+                            VStack(alignment: .leading, spacing: Spacing.gapSm) {
+                                Text("Blocked")
+                                    .font(Typography.labelMedium)
+                                    .foregroundColor(.accentYellow)
+                                Text(blockedReason)
+                                    .font(Typography.bodyMedium)
+                                    .foregroundColor(.textPrimary)
+                            }
+                            .padding(Spacing.md)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.bgElevated)
+                            .cornerRadius(Spacing.radiusMd)
+                        } else {
+                            Text("No clarification questions yet.")
+                                .font(Typography.bodyMedium)
+                                .foregroundColor(.textMuted)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .padding(.vertical, Spacing.xxl)
+                        }
+
+                        if (appState.mcpConnectionStatus.isClientConnected()
+                            || appState.claudeMCPRegistrationStatus.isReadyForLocalProjectStore),
+                           let mcpPromptName,
+                           blockedReason?.localizedCaseInsensitiveContains("provider") == true {
+                            VStack(alignment: .leading, spacing: Spacing.gapSm) {
+                                Text("MCP Next Step")
+                                    .font(Typography.labelMedium)
+                                    .foregroundColor(.accentPurple)
+                                Text("Claude MCP is ready, but stage work does not start automatically from the board. In Claude Code, ask it to run the `\(mcpPromptName)` prompt for ticket `\(ticket.id)`, or configure an in-app provider in Settings.")
+                                    .font(Typography.bodySmall)
+                                    .foregroundColor(.textSecondary)
+                            }
+                            .padding(Spacing.md)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Color.accentPurpleDim)
+                            .cornerRadius(Spacing.radiusMd)
+                        }
+                    }
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: Spacing.gapLg) {
                             // Unanswered questions
-                            if !unanswered.isEmpty {
+                            if !manualUnanswered.isEmpty {
                                 Text("Needs Your Input")
                                     .font(Typography.labelMedium)
                                     .foregroundColor(.accentYellow)
 
-                                ForEach(unanswered, id: \.id) { item in
+                                ForEach(manualUnanswered, id: \.id) { item in
                                     VStack(alignment: .leading, spacing: Spacing.gapSm) {
                                         HStack(alignment: .top, spacing: Spacing.gapSm) {
                                             Image(systemName: "questionmark.circle.fill")
@@ -82,6 +145,33 @@ struct ClarificationPanel: View {
                                     }
                                     .padding(Spacing.md)
                                     .background(Color.bgElevated)
+                                    .cornerRadius(Spacing.radiusMd)
+                                }
+                            }
+
+                            if !inlineReviewFeedback.isEmpty {
+                                Text("Applying Review Feedback")
+                                    .font(Typography.labelMedium)
+                                    .foregroundColor(.accentPurple)
+
+                                ForEach(inlineReviewFeedback, id: \.id) { item in
+                                    VStack(alignment: .leading, spacing: Spacing.gapSm) {
+                                        HStack(alignment: .top, spacing: Spacing.gapSm) {
+                                            Image(systemName: "arrow.trianglehead.clockwise")
+                                                .foregroundColor(.accentPurple)
+                                                .font(.system(size: Spacing.iconSmall))
+                                            VStack(alignment: .leading, spacing: 6) {
+                                                Text(extractedInlineReviewFeedback(from: item) ?? item.question)
+                                                    .font(Typography.bodyMedium)
+                                                    .foregroundColor(.textPrimary)
+                                                Text("This change request was already provided in the review step. DevJourney will reuse it automatically.")
+                                                    .font(Typography.captionLarge)
+                                                    .foregroundColor(.textSecondary)
+                                            }
+                                        }
+                                    }
+                                    .padding(Spacing.md)
+                                    .background(Color.accentPurpleDim)
                                     .cornerRadius(Spacing.radiusMd)
                                 }
                             }
@@ -127,19 +217,24 @@ struct ClarificationPanel: View {
                     } label: {
                         HStack(spacing: Spacing.gapSm) {
                             Image(systemName: "play.fill")
-                            Text("Resume Agent")
+                            Text(inlineReviewFeedback.isEmpty ? "Resume Agent" : "Apply Changes and Resume")
                         }
                         .font(Typography.labelLarge)
-                        .foregroundColor(unanswered.isEmpty ? .bgApp : .textMuted)
+                        .foregroundColor(manualUnanswered.isEmpty ? .bgApp : .textMuted)
                         .frame(maxWidth: .infinity)
                         .frame(height: Spacing.buttonHeight)
-                        .background(unanswered.isEmpty ? Color.accentGreen : Color.bgElevated)
+                        .background(manualUnanswered.isEmpty ? Color.accentGreen : Color.bgElevated)
                         .cornerRadius(Spacing.radiusMd)
                     }
                     .buttonStyle(.plain)
-                    .disabled(!unanswered.isEmpty)
+                    .disabled(!manualUnanswered.isEmpty)
                 }
             }
+        }
+        .onAppear {
+            appState.resolveClarificationsIfPossible(for: ticket)
+            applyInlineReviewFeedbackIfPossible()
+            autoResumeRecoveredReviewRequestIfPossible()
         }
     }
 
@@ -152,21 +247,51 @@ struct ClarificationPanel: View {
 
     private func submitAnswer(_ item: ClarificationItem) {
         guard let text = answerInputs[item.id], !text.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-        item.answer(text)
+        appState.answerClarification(item, for: ticket, response: text)
         answerInputs.removeValue(forKey: item.id)
+        if ticket.pendingClarificationCount == 0 {
+            isPresented = false
+        }
     }
 
     private func resumeAgent() {
-        // Collect all answers into a single string for the agent
-        let allAnswers = ticket.clarifications
-            .compactMap { item -> String? in
-                guard let answer = item.answer else { return nil }
-                return "Q: \(item.question)\nA: \(answer)"
-            }
-            .joined(separator: "\n\n")
-
-        ticket.setStatus(.active)
-        appState.resumeAgent(for: ticket, answer: allAnswers)
+        applyInlineReviewFeedbackIfPossible()
+        appState.resumeStage(for: ticket)
         isPresented = false
+    }
+
+    private func autoResumeRecoveredReviewRequestIfPossible() {
+        guard manualUnanswered.isEmpty,
+              ticket.handoverStateEnum == .returned,
+              answered.contains(where: {
+                  $0.stage == ticket.stage && $0.question.localizedCaseInsensitiveContains("Review requested changes")
+              }) else {
+            return
+        }
+
+        appState.resumeStage(for: ticket)
+        isPresented = false
+    }
+
+    private func applyInlineReviewFeedbackIfPossible() {
+        for item in inlineReviewFeedback {
+            guard let feedback = extractedInlineReviewFeedback(from: item), !feedback.isEmpty else {
+                continue
+            }
+            appState.answerClarification(item, for: ticket, response: feedback)
+        }
+    }
+
+    private func isInlineReviewFeedback(_ item: ClarificationItem) -> Bool {
+        item.question.localizedCaseInsensitiveContains("Review requested changes:")
+    }
+
+    private func extractedInlineReviewFeedback(from item: ClarificationItem) -> String? {
+        let prefix = "Review requested changes:"
+        guard let range = item.question.range(of: prefix, options: .caseInsensitive) else {
+            return nil
+        }
+        let feedback = item.question[range.upperBound...].trimmingCharacters(in: .whitespacesAndNewlines)
+        return feedback.isEmpty ? nil : feedback
     }
 }

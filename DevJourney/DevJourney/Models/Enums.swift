@@ -69,50 +69,6 @@ enum ProjectType: String, Codable, CaseIterable {
     }
 }
 
-enum AIProvider: String, Codable, CaseIterable, Sendable {
-    case anthropic = "anthropic"
-    case openai = "openai"
-    case gemini = "gemini"
-
-    var displayName: String {
-        switch self {
-        case .anthropic: return "Anthropic (Claude)"
-        case .openai: return "OpenAI (GPT)"
-        case .gemini: return "Google (Gemini)"
-        }
-    }
-
-    var availableModels: [(id: String, name: String)] {
-        switch self {
-        case .anthropic: return [
-            ("claude-opus-4-6", "Claude Opus 4.6"),
-            ("claude-sonnet-4-5-20251001", "Claude Sonnet 4.5"),
-            ("claude-haiku-4-5-20251001", "Claude Haiku 4.5")
-        ]
-        case .openai: return [
-            ("gpt-4o", "GPT-4o"),
-            ("gpt-4o-mini", "GPT-4o Mini")
-        ]
-        case .gemini: return [
-            ("gemini-2.5-pro-preview-06-05", "Gemini 2.5 Pro"),
-            ("gemini-2.0-flash", "Gemini 2.0 Flash")
-        ]
-        }
-    }
-
-    var keychainService: String {
-        "com.devjourney.apikey.\(self.rawValue)"
-    }
-
-    var iconName: String {
-        switch self {
-        case .anthropic: return "brain.head.profile"
-        case .openai: return "sparkles"
-        case .gemini: return "diamond"
-        }
-    }
-}
-
 enum RepoVisibility: String, Codable, CaseIterable, Sendable {
     case `private` = "private"
     case `public` = "public"
@@ -157,6 +113,25 @@ enum ScreenSize: String, Codable, CaseIterable, Sendable {
         case .mobile: return "M"
         case .tablet: return "T"
         case .desktop: return "D"
+        }
+    }
+}
+
+enum MobilePlatform: String, Codable, CaseIterable, Sendable {
+    case ios = "ios"
+    case android = "android"
+
+    var displayName: String {
+        switch self {
+        case .ios: return "iOS"
+        case .android: return "Android"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .ios: return "iphone"
+        case .android: return "apple.terminal.on.rectangle"
         }
     }
 }

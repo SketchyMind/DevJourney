@@ -9,18 +9,21 @@ struct SettingsView: View {
     @State private var projectName: String = ""
     @State private var projectDescription: String = ""
     @State private var projectType: ProjectType = .webApp
-    @State private var defaultModel: String = "claude-sonnet-4-5-20251001"
-    @State private var defaultProvider: String = "anthropic"
     @State private var githubRepo: String = ""
     @State private var selectedScreenSizes: Set<String> = []
     @State private var responsiveBehavior: String = "fluid"
     @State private var techStack: String = ""
-
-    @StateObject private var providerAuth = AIProviderAuthService()
-    @State private var anthropicKey: String = ""
-    @State private var openaiKey: String = ""
-    @State private var geminiKey: String = ""
-
+    @State private var selectedMobilePlatforms: Set<String> = [MobilePlatform.ios.rawValue, MobilePlatform.android.rawValue]
+    @State private var providerKeyInputs: [String: String] = [:]
+    @State private var configuredProviderKeys: [String: Bool] = [:]
+    @State private var planningProviderConfigId: String = ""
+    @State private var planningModelOverride: String = ""
+    @State private var designProviderConfigId: String = ""
+    @State private var designModelOverride: String = ""
+    @State private var devProviderConfigId: String = ""
+    @State private var devModelOverride: String = ""
+    @State private var debugProviderConfigId: String = ""
+    @State private var debugModelOverride: String = ""
     @State private var showValidationError = false
     @State private var showSavedConfirmation = false
 
@@ -91,7 +94,7 @@ struct SettingsView: View {
                         settingsField(title: "Project Type") {
                             HStack(spacing: Spacing.md) {
                                 ForEach(ProjectType.allCases, id: \.self) { type in
-                                    Button(action: { projectType = type }) {
+                                    Button(action: { selectProjectType(type) }) {
                                         VStack(spacing: 10) {
                                             Image(systemName: type.iconName)
                                                 .font(.system(size: 24))
@@ -118,17 +121,6 @@ struct SettingsView: View {
                             }
                         }
 
-                        // Default Model
-                        settingsField(title: "Default AI Model") {
-                            Picker("", selection: $defaultModel) {
-                                ForEach(AIModelConfig.allModels, id: \.id) { model in
-                                    Text(model.displayName).tag(model.id)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .tint(.accentPurple)
-                        }
-
                         // Project Folder
                         settingsField(title: "Project Folder") {
                             HStack(spacing: Spacing.gapSm) {
@@ -149,17 +141,6 @@ struct SettingsView: View {
 
                         Divider().background(Color.borderSubtle)
 
-                        // API Keys Section
-                        Text("AI Provider Keys")
-                            .font(Typography.headingSmall)
-                            .foregroundColor(.textPrimary)
-
-                        apiKeyField(provider: .anthropic, key: $anthropicKey)
-                        apiKeyField(provider: .openai, key: $openaiKey)
-                        apiKeyField(provider: .gemini, key: $geminiKey)
-
-                        Divider().background(Color.borderSubtle)
-
                         // GitHub Repo
                         settingsField(title: "GitHub Repository") {
                             TextField("https://github.com/owner/repo", text: $githubRepo)
@@ -173,6 +154,39 @@ struct SettingsView: View {
                         }
 
                         Divider().background(Color.borderSubtle)
+
+                        if projectType == .mobileApp {
+                            settingsField(title: "Mobile Targets") {
+                                Text("These platforms will be included automatically in every ticket and agent run.")
+                                    .font(.system(size: 11, weight: .regular))
+                                    .foregroundColor(.textMuted)
+
+                                HStack(spacing: Spacing.md) {
+                                    ForEach(MobilePlatform.allCases, id: \.self) { platform in
+                                        Button(action: { toggleMobilePlatform(platform.rawValue) }) {
+                                            HStack(spacing: 8) {
+                                                Image(systemName: platform.iconName)
+                                                    .font(.system(size: 14, weight: .semibold))
+                                                Text(platform.displayName)
+                                                    .font(Typography.labelSmall)
+                                            }
+                                            .frame(maxWidth: .infinity)
+                                            .padding(Spacing.md)
+                                            .background(selectedMobilePlatforms.contains(platform.rawValue) ? Color.accentPurple.opacity(0.1) : Color.white.opacity(0.03))
+                                            .foregroundColor(selectedMobilePlatforms.contains(platform.rawValue) ? .textPrimary : .textSecondary)
+                                            .cornerRadius(Spacing.radiusMd)
+                                            .overlay(
+                                                RoundedRectangle(cornerRadius: Spacing.radiusMd)
+                                                    .stroke(selectedMobilePlatforms.contains(platform.rawValue) ? Color.accentPurple : Color.fieldBorder, lineWidth: 1)
+                                            )
+                                        }
+                                        .buttonStyle(.plain)
+                                    }
+                                }
+                            }
+
+                            Divider().background(Color.borderSubtle)
+                        }
 
                         // Screen Sizes
                         settingsField(title: "Target Screen Sizes") {
@@ -241,6 +255,84 @@ struct SettingsView: View {
                                 .font(.system(size: 11, weight: .regular))
                                 .foregroundColor(.textMuted)
                         }
+
+                        Divider().background(Color.borderSubtle)
+
+                        if !providerConfigs.isEmpty {
+                            Text("Provider Runtime")
+                                .font(Typography.headingSmall)
+                                .foregroundColor(.textPrimary)
+
+                            ForEach(providerConfigs, id: \.id) { config in
+                                providerCard(config)
+                            }
+
+                            Divider().background(Color.borderSubtle)
+
+                            Text("Stage Defaults")
+                                .font(Typography.headingSmall)
+                                .foregroundColor(.textPrimary)
+
+                            stageDefaultRow(
+                                stage: .planning,
+                                providerId: $planningProviderConfigId,
+                                modelOverride: $planningModelOverride
+                            )
+                            stageDefaultRow(
+                                stage: .design,
+                                providerId: $designProviderConfigId,
+                                modelOverride: $designModelOverride
+                            )
+                            stageDefaultRow(
+                                stage: .dev,
+                                providerId: $devProviderConfigId,
+                                modelOverride: $devModelOverride
+                            )
+                            stageDefaultRow(
+                                stage: .debug,
+                                providerId: $debugProviderConfigId,
+                                modelOverride: $debugModelOverride
+                            )
+                        }
+
+                        Divider().background(Color.borderSubtle)
+
+                        // MCP Server Status
+                        settingsField(title: "AI Connection") {
+                            let mcpConnected = appState.mcpConnectionStatus.isClientConnected()
+                            let claudeMCPReady = appState.claudeMCPRegistrationStatus.isReadyForLocalProjectStore
+                            let statusText = mcpConnected
+                                ? "Connected to \(appState.mcpConnectionStatus.displayClientName)"
+                                : (claudeMCPReady
+                                   ? "Claude Code MCP is installed and ready for local tickets"
+                                   : "Connect from Claude Code or configure an in-app provider")
+                            HStack(spacing: Spacing.md) {
+                                Image(systemName: "network")
+                                    .font(.system(size: 18))
+                                    .foregroundColor(.accentPurple)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text("MCP Server")
+                                        .font(Typography.labelMedium)
+                                        .foregroundColor(.textPrimary)
+                                    Text(statusText)
+                                        .font(.system(size: 11))
+                                        .foregroundColor(.textSecondary)
+                                }
+                                Spacer()
+                                HStack(spacing: 4) {
+                                    Circle()
+                                        .fill((mcpConnected || claudeMCPReady) ? Color.accentGreen : Color.textMuted)
+                                        .frame(width: 8, height: 8)
+                                    Text(mcpConnected ? "Connected" : (claudeMCPReady ? "Ready" : "Idle"))
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundColor((mcpConnected || claudeMCPReady) ? .accentGreen : .textMuted)
+                                }
+                            }
+                            .padding(Spacing.md)
+                            .background(Color.fieldBg)
+                            .cornerRadius(Spacing.radiusMd)
+                            .overlay(RoundedRectangle(cornerRadius: Spacing.radiusMd).stroke(Color.fieldBorder, lineWidth: 1))
+                        }
                     }
                     .padding(Spacing.xl)
                 }
@@ -306,57 +398,188 @@ struct SettingsView: View {
         }
     }
 
-    @ViewBuilder
-    private func apiKeyField(provider: AIProvider, key: Binding<String>) -> some View {
-        let state = providerAuth.providerStates[provider] ?? .init()
+    private var providerConfigs: [AIProviderConfig] {
+        guard let project = appState.currentProject else { return [] }
+        return project.providerConfigs.sorted { lhs, rhs in
+            lhs.kindEnum.displayName < rhs.kindEnum.displayName
+        }
+    }
 
+    private var enabledProviderConfigs: [AIProviderConfig] {
+        providerConfigs.filter(\.enabled)
+    }
+
+    @ViewBuilder
+    private func providerCard(_ config: AIProviderConfig) -> some View {
         VStack(alignment: .leading, spacing: Spacing.md) {
             HStack(spacing: Spacing.md) {
-                Image(systemName: provider.iconName)
-                    .font(.system(size: 14))
-                    .foregroundColor(.textPrimary)
-                Text(provider.displayName)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundColor(.textPrimary)
-                Spacer()
-                if state.isConnected {
-                    HStack(spacing: 4) {
-                        Image(systemName: "checkmark.circle.fill")
-                            .font(.system(size: 10))
-                        Text("Connected")
-                    }
-                    .font(Typography.badgeText)
-                    .foregroundColor(.accentGreen)
-                    .padding(.horizontal, Spacing.md)
-                    .padding(.vertical, 4)
-                    .background(Color.accentGreen.opacity(0.2))
-                    .cornerRadius(4)
+                Image(systemName: config.kindEnum.iconName)
+                    .font(.system(size: 16))
+                    .foregroundColor(.accentPurple)
+                    .frame(width: 28, height: 28)
+                    .background(Color.accentPurple.opacity(0.12))
+                    .cornerRadius(8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(config.displayName)
+                        .font(Typography.labelMedium)
+                        .foregroundColor(.textPrimary)
+                    Text(config.kindEnum.displayName)
+                        .font(Typography.captionLarge)
+                        .foregroundColor(.textMuted)
                 }
+
+                Spacer()
+
+                Toggle("", isOn: Binding(
+                    get: { config.enabled },
+                    set: {
+                        config.enabled = $0
+                        config.touch()
+                    }
+                ))
+                .toggleStyle(.switch)
+                .labelsHidden()
             }
 
+            if config.kindEnum.supportsCustomBaseURL {
+                TextField("Provider name", text: Binding(
+                    get: { config.displayName },
+                    set: {
+                        config.displayName = $0
+                        config.touch()
+                    }
+                ))
+                .textFieldStyle(.plain)
+                .font(Typography.bodySmall)
+                .foregroundColor(.textPrimary)
+                .padding(Spacing.sm)
+                .background(Color.fieldBg)
+                .cornerRadius(Spacing.radiusSm)
+                .overlay(
+                    RoundedRectangle(cornerRadius: Spacing.radiusSm)
+                        .stroke(Color.fieldBorder, lineWidth: 1)
+                )
+
+                TextField("https://your-compatible-endpoint/v1", text: Binding(
+                    get: { config.baseURL ?? "" },
+                    set: {
+                        config.baseURL = $0
+                        config.touch()
+                    }
+                ))
+                .textFieldStyle(.plain)
+                .font(Typography.code)
+                .foregroundColor(.textPrimary)
+                .padding(Spacing.sm)
+                .background(Color.fieldBg)
+                .cornerRadius(Spacing.radiusSm)
+                .overlay(
+                    RoundedRectangle(cornerRadius: Spacing.radiusSm)
+                        .stroke(Color.fieldBorder, lineWidth: 1)
+                )
+            }
+
+            TextField("Default model", text: Binding(
+                get: { config.defaultModel },
+                set: {
+                    config.defaultModel = $0
+                    config.touch()
+                }
+            ))
+            .textFieldStyle(.plain)
+            .font(Typography.code)
+            .foregroundColor(.textPrimary)
+            .padding(Spacing.sm)
+            .background(Color.fieldBg)
+            .cornerRadius(Spacing.radiusSm)
+            .overlay(
+                RoundedRectangle(cornerRadius: Spacing.radiusSm)
+                    .stroke(Color.fieldBorder, lineWidth: 1)
+            )
+
+            HStack(spacing: Spacing.gapSm) {
+                if configuredProviderKeys[config.id] == true {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundColor(.accentGreen)
+                        Text("API key configured")
+                            .font(Typography.captionLarge)
+                            .foregroundColor(.accentGreen)
+                    }
+
+                    Spacer()
+
+                    Button("Remove Key") {
+                        removeProviderKey(config)
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.accentRed)
+                    .buttonStyle(.plain)
+                } else {
+                    SecureField("API key", text: bindingForProviderKey(config.id))
+                        .textFieldStyle(.plain)
+                        .font(Typography.code)
+                        .foregroundColor(.textPrimary)
+                        .padding(Spacing.sm)
+                        .background(Color.fieldBg)
+                        .cornerRadius(Spacing.radiusSm)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: Spacing.radiusSm)
+                                .stroke(Color.fieldBorder, lineWidth: 1)
+                        )
+
+                    Button("Save Key") {
+                        saveProviderKey(config)
+                    }
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundColor(.accentPurple)
+                    .buttonStyle(.plain)
+                    .disabled((providerKeyInputs[config.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+        }
+        .padding(Spacing.md)
+        .background(Color.bgElevated)
+        .cornerRadius(Spacing.radiusMd)
+        .overlay(
+            RoundedRectangle(cornerRadius: Spacing.radiusMd)
+                .stroke(Color.borderSubtle, lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func stageDefaultRow(
+        stage: Stage,
+        providerId: Binding<String>,
+        modelOverride: Binding<String>
+    ) -> some View {
+        VStack(alignment: .leading, spacing: Spacing.gapSm) {
+            Text(stage.displayName)
+                .font(Typography.labelMedium)
+                .foregroundColor(.textPrimary)
+
             HStack(spacing: Spacing.md) {
-                SecureField("Enter API key...", text: key)
+                Picker("", selection: providerId) {
+                    Text("Select provider").tag("")
+                    ForEach(enabledProviderConfigs, id: \.id) { config in
+                        Text(config.displayName).tag(config.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(.accentPurple)
+
+                TextField("Model override (optional)", text: modelOverride)
+                    .textFieldStyle(.plain)
                     .font(Typography.code)
                     .foregroundColor(.textPrimary)
-                    .padding(Spacing.md)
+                    .padding(Spacing.sm)
                     .background(Color.fieldBg)
-                    .cornerRadius(Spacing.radiusMd)
-                    .overlay(RoundedRectangle(cornerRadius: Spacing.radiusMd).stroke(Color.fieldBorder, lineWidth: 1))
-
-                Button(action: {
-                    providerAuth.connectWithAPIKey(provider: provider, key: key.wrappedValue)
-                    appState.refreshProviderStatuses()
-                }) {
-                    Text(state.isConnected ? "Connected" : "Connect")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundColor(state.isConnected ? .accentGreen : .textPrimary)
-                        .padding(.horizontal, Spacing.md)
-                        .frame(height: Spacing.compactButtonHeight)
-                        .background(state.isConnected ? Color.accentGreen.opacity(0.15) : Color.bgElevated)
-                        .cornerRadius(Spacing.radiusSm)
-                }
-                .buttonStyle(.plain)
-                .disabled(key.wrappedValue.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .cornerRadius(Spacing.radiusSm)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Spacing.radiusSm)
+                            .stroke(Color.fieldBorder, lineWidth: 1)
+                    )
             }
         }
     }
@@ -379,21 +602,71 @@ struct SettingsView: View {
         }
     }
 
+    private func toggleMobilePlatform(_ platform: String) {
+        if selectedMobilePlatforms.contains(platform) {
+            if selectedMobilePlatforms.count > 1 {
+                selectedMobilePlatforms.remove(platform)
+            }
+        } else {
+            selectedMobilePlatforms.insert(platform)
+        }
+    }
+
+    private func selectProjectType(_ type: ProjectType) {
+        projectType = type
+        if type == .mobileApp, selectedMobilePlatforms.isEmpty {
+            selectedMobilePlatforms = [MobilePlatform.ios.rawValue, MobilePlatform.android.rawValue]
+        }
+    }
+
+    private func bindingForProviderKey(_ providerId: String) -> Binding<String> {
+        Binding(
+            get: { providerKeyInputs[providerId] ?? "" },
+            set: { providerKeyInputs[providerId] = $0 }
+        )
+    }
+
+    private func saveProviderKey(_ config: AIProviderConfig) {
+        let trimmed = (providerKeyInputs[config.id] ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+
+        try? KeychainService.shared.saveProviderAPIKey(trimmed, reference: config.apiKeyReference)
+        providerKeyInputs[config.id] = ""
+        configuredProviderKeys[config.id] = true
+    }
+
+    private func removeProviderKey(_ config: AIProviderConfig) {
+        try? KeychainService.shared.deleteProviderAPIKey(reference: config.apiKeyReference)
+        configuredProviderKeys[config.id] = false
+    }
+
     private func loadCurrentValues() {
         guard let project = appState.currentProject else { return }
+        appState.projectService.ensureDefaultProviderConfigs(for: project)
         projectName = project.name
         projectDescription = project.projectDescription
         projectType = ProjectType(rawValue: project.projectType) ?? .other
-        defaultModel = project.defaultModel
-        defaultProvider = project.defaultProvider
         githubRepo = project.githubRepo ?? ""
         selectedScreenSizes = Set(project.screenSizes)
         responsiveBehavior = project.responsiveBehavior
         techStack = project.techStack
+        let storedPlatforms = Set(project.normalizedMobilePlatforms)
+        selectedMobilePlatforms = storedPlatforms.isEmpty
+            ? [MobilePlatform.ios.rawValue, MobilePlatform.android.rawValue]
+            : storedPlatforms
+        planningProviderConfigId = project.planningProviderConfigId ?? ""
+        planningModelOverride = project.planningModelOverride
+        designProviderConfigId = project.designProviderConfigId ?? ""
+        designModelOverride = project.designModelOverride
+        devProviderConfigId = project.devProviderConfigId ?? ""
+        devModelOverride = project.devModelOverride
+        debugProviderConfigId = project.debugProviderConfigId ?? ""
+        debugModelOverride = project.debugModelOverride
 
-        anthropicKey = KeychainService.shared.readAPIKey(for: .anthropic) ?? ""
-        openaiKey = KeychainService.shared.readAPIKey(for: .openai) ?? ""
-        geminiKey = KeychainService.shared.readAPIKey(for: .gemini) ?? ""
+        providerKeyInputs = [:]
+        configuredProviderKeys = Dictionary(uniqueKeysWithValues: providerConfigs.map { config in
+            (config.id, KeychainService.shared.readProviderAPIKey(reference: config.apiKeyReference) != nil)
+        })
     }
 
     private func saveSettings() {
@@ -405,17 +678,25 @@ struct SettingsView: View {
 
         guard let project = appState.currentProject else { return }
 
+        project.planningProviderConfigId = planningProviderConfigId.isEmpty ? nil : planningProviderConfigId
+        project.planningModelOverride = planningModelOverride
+        project.designProviderConfigId = designProviderConfigId.isEmpty ? nil : designProviderConfigId
+        project.designModelOverride = designModelOverride
+        project.devProviderConfigId = devProviderConfigId.isEmpty ? nil : devProviderConfigId
+        project.devModelOverride = devModelOverride
+        project.debugProviderConfigId = debugProviderConfigId.isEmpty ? nil : debugProviderConfigId
+        project.debugModelOverride = debugModelOverride
+
         appState.projectService.updateProjectSettings(
             project,
             name: trimmedName,
             description: projectDescription.trimmingCharacters(in: .whitespacesAndNewlines),
             projectType: projectType.rawValue,
-            defaultModel: defaultModel,
-            defaultProvider: defaultProvider,
             githubRepo: githubRepo.isEmpty ? nil : githubRepo,
             screenSizes: Array(selectedScreenSizes),
             responsiveBehavior: responsiveBehavior,
-            techStack: techStack
+            techStack: techStack,
+            mobilePlatforms: Array(selectedMobilePlatforms)
         )
 
         withAnimation(.contentTransition) {

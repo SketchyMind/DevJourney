@@ -1,6 +1,6 @@
 import Foundation
 
-/// Parsed result from an agent's response.
+/// Parsed result from stage work (used by MCP tools when recording stage output).
 struct AgentResponseResult {
     var thoughts: [String] = []
     var summary: [String] = []
@@ -10,13 +10,13 @@ struct AgentResponseResult {
     var clarificationQuestion: String?
 }
 
-/// Protocol that all stage-specific agents conform to.
+/// Protocol for stage-specific agent prompt templates.
+/// In MCP mode, these are used to generate prompt context that gets surfaced
+/// to the external AI client via MCP prompt templates.
 protocol StageAgent {
     var stageName: String { get }
-
     func buildSystemPrompt(ticket: Ticket, project: Project) -> String
     func buildInitialMessage(ticket: Ticket, project: Project) -> String
-    func parseResponse(_ response: String) -> AgentResponseResult
 }
 
 extension StageAgent {
@@ -24,7 +24,6 @@ extension StageAgent {
     func projectContext(project: Project, ticket: Ticket) -> String {
         var sections: [String] = []
 
-        // Core project info
         sections.append("""
         ## Project Context
         - Project: \(project.name)
@@ -33,12 +32,23 @@ extension StageAgent {
         - Folder: \(project.folderPath)
         """)
 
-        // Tech stack & screen sizes
         if !project.techStack.isEmpty {
             sections.append("""
             ## Tech Stack
             \(project.techStack)
             """)
+        }
+
+        if project.projectType == ProjectType.mobileApp.rawValue {
+            let platforms = project.normalizedMobilePlatforms
+                .compactMap(MobilePlatform.init(rawValue:))
+                .map(\.displayName)
+            if !platforms.isEmpty {
+                sections.append("""
+                ## Mobile Targets
+                \(platforms.joined(separator: ", "))
+                """)
+            }
         }
 
         if !project.screenSizes.isEmpty {
@@ -49,7 +59,6 @@ extension StageAgent {
             """)
         }
 
-        // GitHub repo
         if let repo = project.githubRepo, !repo.isEmpty {
             sections.append("""
             ## Repository
@@ -58,17 +67,6 @@ extension StageAgent {
             """)
         }
 
-        // AI model metadata
-        if let config = AIModelConfig.config(for: ticket.aiModel) {
-            sections.append("""
-            ## AI Model
-            - Provider: \(config.provider.displayName)
-            - Model: \(config.displayName)
-            - Context window: \(config.contextWindow) tokens
-            """)
-        }
-
-        // Ticket info
         var ticketSection = """
         ## Current Ticket
         - Title: \(ticket.title)
@@ -81,9 +79,11 @@ extension StageAgent {
         }
         sections.append(ticketSection)
 
-        // Prior stage outputs
         let prior = priorStageContext(ticket: ticket)
         if !prior.isEmpty { sections.append(prior) }
+
+        let clarifications = clarificationContext(ticket: ticket)
+        if !clarifications.isEmpty { sections.append(clarifications) }
 
         return sections.joined(separator: "\n\n")
     }
@@ -110,92 +110,19 @@ extension StageAgent {
         return parts.joined(separator: "\n")
     }
 
-    /// Default response parser that looks for structured markers in the response.
-    func parseResponse(_ response: String) -> AgentResponseResult {
-        var result = AgentResponseResult()
-        let lines = response.components(separatedBy: "\n")
+    func clarificationContext(ticket: Ticket) -> String {
+        let answered = ticket.clarifications
+            .filter { $0.stage == ticket.stage && $0.answer != nil }
 
-        var currentSection: String?
+        guard !answered.isEmpty else { return "" }
 
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            if trimmed.hasPrefix("## Thoughts") || trimmed.hasPrefix("### Thoughts") {
-                currentSection = "thoughts"
-                continue
-            } else if trimmed.hasPrefix("## Summary") || trimmed.hasPrefix("### Summary") {
-                currentSection = "summary"
-                continue
-            } else if trimmed.hasPrefix("## Clarification") || trimmed.hasPrefix("### Clarification") {
-                currentSection = "clarification"
-                result.needsClarification = true
-                continue
-            } else if trimmed.hasPrefix("## Files") || trimmed.hasPrefix("### Files") {
-                currentSection = "files"
-                continue
-            } else if trimmed.hasPrefix("##") || trimmed.hasPrefix("###") {
-                currentSection = nil
-                continue
-            }
-
-            guard !trimmed.isEmpty else { continue }
-
-            switch currentSection {
-            case "thoughts":
-                let thought = trimmed.hasPrefix("- ") ? String(trimmed.dropFirst(2)) : trimmed
-                result.thoughts.append(thought)
-            case "summary":
-                let item = trimmed.hasPrefix("- ") ? String(trimmed.dropFirst(2)) : trimmed
-                result.summary.append(item)
-            case "clarification":
-                if result.clarificationQuestion == nil {
-                    let q = trimmed.hasPrefix("- ") ? String(trimmed.dropFirst(2)) : trimmed
-                    result.clarificationQuestion = q
-                }
-            case "files":
-                if let file = parseFileChangeLine(trimmed) {
-                    result.filesChanged.append(file)
-                }
-            default:
-                break
-            }
+        let items = answered.map { item in
+            "Q: \(item.question)\nA: \(item.answer ?? "")"
         }
 
-        // If no structured format, treat entire response as summary
-        if result.thoughts.isEmpty && result.summary.isEmpty && !result.needsClarification {
-            result.summary = [response]
-        }
-
-        return result
-    }
-
-    private func parseFileChangeLine(_ line: String) -> FileChange? {
-        // Expected: "- path/to/file.swift (modified, +10, -3)"
-        let cleaned = line.hasPrefix("- ") ? String(line.dropFirst(2)) : line
-        let parts = cleaned.components(separatedBy: " (")
-        guard parts.count >= 1 else { return nil }
-        let path = parts[0].trimmingCharacters(in: .whitespaces)
-        guard !path.isEmpty else { return nil }
-
-        var status = "modified"
-        var additions = 0
-        var deletions = 0
-
-        if parts.count >= 2 {
-            let meta = parts[1].replacingOccurrences(of: ")", with: "")
-            let metaParts = meta.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }
-            if let first = metaParts.first {
-                status = first
-            }
-            for part in metaParts {
-                if part.hasPrefix("+"), let n = Int(part.dropFirst()) {
-                    additions = n
-                } else if part.hasPrefix("-"), let n = Int(part.dropFirst()) {
-                    deletions = n
-                }
-            }
-        }
-
-        return FileChange(path: path, status: status, additions: additions, deletions: deletions)
+        return """
+        ## Clarifications Resolved
+        \(items.joined(separator: "\n\n"))
+        """
     }
 }

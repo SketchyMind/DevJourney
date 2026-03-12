@@ -23,9 +23,7 @@ struct PanelContainer<Content: View>: View {
                                 .font(.system(size: 12, weight: .bold))
                                 .foregroundColor(.textSecondary)
                                 .frame(width: 28, height: 28)
-                                .background(Color.white.opacity(0.05))
-                                .clipShape(RoundedRectangle(cornerRadius: Spacing.radiusSm))
-                                .overlay(RoundedRectangle(cornerRadius: Spacing.radiusSm).strokeBorder(Color.borderSubtle, lineWidth: 1))
+                                .glassEffect(.regular.interactive(), in: .circle)
                         }
                         .buttonStyle(.plain)
                         .accessibilityLabel("Close")

@@ -1,27 +1,58 @@
 import Foundation
 
-/// Client for the Anthropic Messages API. Uses URLSession streaming.
-final class ClaudeAPIClient: AIClientProtocol, Sendable {
-    static let shared = ClaudeAPIClient()
+/// Anthropic Messages API client for running stage agents.
+/// Streams responses and updates the AgentSession in real time.
+@MainActor
+final class ClaudeAPIClient {
+    static let keychainService = "com.devjourney.anthropic.apikey"
 
     private let baseURL = "https://api.anthropic.com/v1/messages"
     private let apiVersion = "2023-06-01"
+    private let defaultModel = "claude-sonnet-4-20250514"
 
-    /// Returns the API key from Keychain (migrated from UserDefaults).
-    private var apiKey: String {
-        KeychainService.shared.readAPIKey(for: .anthropic) ?? ""
+    /// Save API key to Keychain
+    static func saveAPIKey(_ key: String) {
+        try? KeychainService.shared.saveString(
+            service: keychainService,
+            account: "default",
+            value: key
+        )
     }
 
-    /// Send a non-streaming message and return the full text response.
-    func sendMessage(
-        model: String,
+    /// Read API key from Keychain
+    static func readAPIKey() -> String? {
+        KeychainService.shared.readString(
+            service: keychainService,
+            account: "default"
+        )
+    }
+
+    /// Delete API key from Keychain
+    static func deleteAPIKey() {
+        try? KeychainService.shared.delete(
+            service: keychainService,
+            account: "default"
+        )
+    }
+
+    /// Check if API key is configured
+    static var isConfigured: Bool {
+        readAPIKey() != nil
+    }
+
+    /// Run a stage agent for a ticket, streaming results into the session.
+    func runAgent(
         systemPrompt: String,
-        messages: [(role: String, content: String)],
-        maxTokens: Int = 4096
-    ) async throws -> String {
-        guard !apiKey.isEmpty else {
-            throw ClaudeAPIError.missingAPIKey
+        userMessage: String,
+        session: AgentSession,
+        onUpdate: @escaping () -> Void
+    ) async throws {
+        guard let apiKey = Self.readAPIKey() else {
+            throw ClaudeAPIError.noAPIKey
         }
+
+        session.addThought("Starting \(session.stage) agent...")
+        onUpdate()
 
         var request = URLRequest(url: URL(string: baseURL)!)
         request.httpMethod = "POST"
@@ -30,111 +61,156 @@ final class ClaudeAPIClient: AIClientProtocol, Sendable {
         request.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
 
         let body: [String: Any] = [
-            "model": model,
-            "max_tokens": maxTokens,
+            "model": defaultModel,
+            "max_tokens": 4096,
+            "stream": true,
             "system": systemPrompt,
-            "messages": messages.map { ["role": $0.role, "content": $0.content] }
+            "messages": [
+                ["role": "user", "content": userMessage]
+            ]
         ]
-
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        session.addDialogEntry(role: "user", content: userMessage)
+        onUpdate()
+
+        // Stream the response
+        let (bytes, response) = try await URLSession.shared.bytes(for: request)
 
         guard let httpResponse = response as? HTTPURLResponse else {
             throw ClaudeAPIError.invalidResponse
         }
 
+        if httpResponse.statusCode == 401 {
+            throw ClaudeAPIError.invalidAPIKey
+        }
+
         guard httpResponse.statusCode == 200 else {
-            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
-            throw ClaudeAPIError.apiError(statusCode: httpResponse.statusCode, message: errorBody)
+            throw ClaudeAPIError.httpError(httpResponse.statusCode)
         }
 
-        let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-        guard let content = json?["content"] as? [[String: Any]],
-              let firstBlock = content.first,
-              let text = firstBlock["text"] as? String else {
-            throw ClaudeAPIError.unexpectedFormat
-        }
-
-        return text
-    }
-
-    /// Stream a message, calling the handler for each text delta.
-    func streamMessage(
-        model: String,
-        systemPrompt: String,
-        messages: [(role: String, content: String)],
-        maxTokens: Int = 4096,
-        onDelta: @Sendable @escaping (String) -> Void
-    ) async throws -> String {
-        guard !apiKey.isEmpty else {
-            throw ClaudeAPIError.missingAPIKey
-        }
-
-        var request = URLRequest(url: URL(string: baseURL)!)
-        request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue(apiVersion, forHTTPHeaderField: "anthropic-version")
-
-        let body: [String: Any] = [
-            "model": model,
-            "max_tokens": maxTokens,
-            "stream": true,
-            "system": systemPrompt,
-            "messages": messages.map { ["role": $0.role, "content": $0.content] }
-        ]
-
-        request.httpBody = try JSONSerialization.data(withJSONObject: body)
-
-        let (bytes, response) = try await URLSession.shared.bytes(for: request)
-
-        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
-            throw ClaudeAPIError.invalidResponse
-        }
-
-        var fullText = ""
+        var fullResponse = ""
 
         for try await line in bytes.lines {
             guard line.hasPrefix("data: ") else { continue }
             let jsonString = String(line.dropFirst(6))
             guard jsonString != "[DONE]" else { break }
 
-            guard let jsonData = jsonString.data(using: .utf8),
-                  let event = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-                continue
-            }
+            guard let data = jsonString.data(using: .utf8),
+                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let type = event["type"] as? String
+            else { continue }
 
-            let eventType = event["type"] as? String
+            switch type {
+            case "content_block_delta":
+                if let delta = event["delta"] as? [String: Any],
+                   let text = delta["text"] as? String {
+                    fullResponse += text
+                }
 
-            if eventType == "content_block_delta",
-               let delta = event["delta"] as? [String: Any],
-               let text = delta["text"] as? String {
-                fullText += text
-                onDelta(text)
+            case "message_stop":
+                break
+
+            default:
+                break
             }
         }
 
-        return fullText
+        // Parse the response into thoughts, summary, etc.
+        let result = parseAgentResponse(fullResponse)
+
+        for thought in result.thoughts {
+            session.addThought(thought)
+        }
+        session.resultSummary = result.summary
+        session.filesChanged = result.filesChanged
+
+        session.addDialogEntry(role: "assistant", content: fullResponse)
+        onUpdate()
+
+        if result.needsClarification {
+            session.addThought("Agent needs clarification — check the response for questions.")
+        }
+
+        session.addThought("Agent completed.")
+        onUpdate()
+    }
+
+    // MARK: - Response Parsing
+
+    private func parseAgentResponse(_ response: String) -> AgentResponseResult {
+        var result = AgentResponseResult()
+        var currentSection = ""
+
+        for line in response.components(separatedBy: "\n") {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            if trimmed.hasPrefix("### Thoughts") {
+                currentSection = "thoughts"
+            } else if trimmed.hasPrefix("### Summary") {
+                currentSection = "summary"
+            } else if trimmed.hasPrefix("### Clarification") {
+                currentSection = "clarification"
+                result.needsClarification = true
+            } else if trimmed.hasPrefix("### Files") {
+                currentSection = "files"
+            } else if trimmed.hasPrefix("- ") {
+                let content = String(trimmed.dropFirst(2))
+                switch currentSection {
+                case "thoughts":
+                    result.thoughts.append(content)
+                case "summary":
+                    result.summary.append(content)
+                case "clarification":
+                    result.clarificationQuestion = content
+                case "files":
+                    if let change = parseFileChange(content) {
+                        result.filesChanged.append(change)
+                    }
+                default:
+                    break
+                }
+            }
+        }
+
+        // If no structured sections found, treat entire response as summary
+        if result.thoughts.isEmpty && result.summary.isEmpty {
+            result.summary = [response]
+        }
+
+        return result
+    }
+
+    private func parseFileChange(_ line: String) -> FileChange? {
+        // Expected format: "path/to/file.swift (created, +10, -0)"
+        let parts = line.components(separatedBy: " (")
+        guard parts.count == 2 else { return nil }
+        let path = parts[0]
+        let meta = parts[1].replacingOccurrences(of: ")", with: "")
+        let metaParts = meta.components(separatedBy: ", ")
+        let status = metaParts.first ?? "modified"
+        return FileChange(path: path, status: status, additions: 0, deletions: 0)
     }
 }
 
+// MARK: - Errors
+
 enum ClaudeAPIError: LocalizedError {
-    case missingAPIKey
+    case noAPIKey
+    case invalidAPIKey
     case invalidResponse
-    case apiError(statusCode: Int, message: String)
-    case unexpectedFormat
+    case httpError(Int)
 
     var errorDescription: String? {
         switch self {
-        case .missingAPIKey:
-            return "Anthropic API key not configured. Add it in Settings."
+        case .noAPIKey:
+            return "No Anthropic API key configured. Add one in Settings."
+        case .invalidAPIKey:
+            return "Invalid API key. Check your key in Settings."
         case .invalidResponse:
-            return "Invalid response from Claude API."
-        case .apiError(let code, let message):
-            return "API error (\(code)): \(message)"
-        case .unexpectedFormat:
-            return "Unexpected response format from Claude API."
+            return "Invalid response from Anthropic API."
+        case .httpError(let code):
+            return "API error (HTTP \(code))."
         }
     }
 }

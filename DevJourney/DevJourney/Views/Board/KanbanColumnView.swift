@@ -4,6 +4,7 @@ struct KanbanColumnView: View {
     @EnvironmentObject var appState: AppState
     let stage: Stage
     var onAddTicket: () -> Void = {}
+    var onOpenDetails: (Ticket) -> Void = { _ in }
     var onStartTicket: (Ticket) -> Void = { _ in }
     var onStartStage: (Ticket) -> Void = { _ in }
     var onStopStage: (Ticket) -> Void = { _ in }
@@ -42,6 +43,7 @@ struct KanbanColumnView: View {
                         ForEach(stageTickets, id: \.id) { ticket in
                             TicketCardView(
                                 ticket: ticket,
+                                onOpenDetails: { onOpenDetails(ticket) },
                                 onStartTicket: { onStartTicket(ticket) },
                                 onStartStage: { onStartStage(ticket) },
                                 onStopStage: { onStopStage(ticket) },
@@ -50,12 +52,18 @@ struct KanbanColumnView: View {
                                 onComplete: { onComplete(ticket) },
                                 onShowHistory: { onShowHistory(ticket) }
                             )
+                            .padding(.horizontal, 2)
+                            .padding(.top, 2)
+                            .padding(.bottom, 14)
                             .transition(.asymmetric(
                                 insertion: .scale(scale: 0.95).combined(with: .opacity),
                                 removal: .scale(scale: 0.95).combined(with: .opacity)
                             ))
                         }
                     }
+                    .padding(.horizontal, 2)
+                    .padding(.top, 2)
+                    .padding(.bottom, 12)
                 }
             }
         }
